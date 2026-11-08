@@ -365,7 +365,7 @@ function renderCalendar() {
         note = `<i class="fa-solid fa-circle-info"></i>Shaded days fall outside the semester${semRange} — no classes are held on those days.`;
     }
     if (makeups.length) {
-        note += `${note ? '<br>' : ''}<i class="fa-solid fa-rotate"></i>${makeups.length} approved make-up class${makeups.length > 1 ? 'es' : ''} this week (marked MAKE-UP).`;
+        note += `${note ? '<br>' : ''}<i class="fa-solid fa-rotate"></i>${makeups.length} approved make-up class${makeups.length > 1 ? 'es' : ''} this week.`;
     }
     noteEl.innerHTML = note;
     noteEl.style.display = note ? '' : 'none';

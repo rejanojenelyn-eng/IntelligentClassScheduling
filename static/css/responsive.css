@@ -30,10 +30,17 @@
     }
     .sidebar.rsp-open { transform: translateX(0); }
 
+    /* The drawer opens BELOW the top bar + toggle bar (like the laptop sidebar) instead
+       of covering them — responsive.js sets --rsp-drawer-top to the bars' bottom edge. */
+    .sidebar, .sidebar.collapsed { top: var(--rsp-drawer-top, 0px); }
+    .rsp-backdrop { top: var(--rsp-drawer-top, 0px) !important; }
+    .sidebar .signout-container { padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+
     /* Undo the desktop "icons only" mode inside the drawer */
     .sidebar.collapsed .nav-label,
     .sidebar.collapsed .nav-section-label,
-    .sidebar.collapsed .nav-arrow { display: initial; }
+    .sidebar.collapsed .nav-arrow,
+    .sidebar.collapsed .sched-caret { display: initial; }
     .sidebar.collapsed .sub-menu.show-submenu { display: block; }
     .sidebar.collapsed .nav-divider::before { display: block; }
     .sidebar.collapsed .nav-divider:not(.nav-divider--lines):not(.nav-divider--center)::after { display: none; }

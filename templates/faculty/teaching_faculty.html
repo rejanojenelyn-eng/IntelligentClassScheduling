@@ -71,6 +71,14 @@
             border-right: 2px solid #630100 !important;
         }
         .cal-table tbody tr:nth-child(even) td:not(.tc) { background: #fafafa; }
+        /* Phones: scroll the days sideways with the TIME column pinned on the left. */
+        .cal-wrapper { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+        .cal-table td.tc { position: sticky; left: 0; z-index: 15; }
+        .cal-table th.tc { left: 0; z-index: 25; }
+        @media (max-width: 700px) {
+            .cal-table { min-width: 760px; }
+            .cal-table .tc { width: 64px; padding: 0 4px; font-size: 0.68rem; }
+        }
 
 
         /* ── Pills ── */

@@ -1149,6 +1149,7 @@ body {
 .sidebar.collapsed .nav-label,
 .sidebar.collapsed .nav-section-label,
 .sidebar.collapsed .nav-arrow,
+.sidebar.collapsed .sched-caret,
 .sidebar.collapsed .sub-menu,
 .sidebar.collapsed .nav-divider::before { display: none; }
 /* Collapsed: each section shows as a short line between its icons. */

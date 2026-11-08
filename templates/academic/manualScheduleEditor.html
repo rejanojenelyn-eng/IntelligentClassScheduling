@@ -297,6 +297,9 @@
     .own-mu-reason { font-size: .7rem; color: #777; margin-top: 2px; }
     .own-mu-x { position: absolute; top: 8px; right: 8px; border: 0; background: none; color: #999; cursor: pointer; font-size: .85rem; }
     .own-mu-x:hover { color: #c0392b; }
+    .local-arr-notice { margin-top: 10px; border: 1.5px solid #f5c08a; background: #fff6ec; border-radius: 10px; padding: 9px 12px; font-size: .75rem; color: #7a4a12; line-height: 1.5; }
+    .local-arr-notice b { color: #b35a00; }
+    .local-arr-notice .lan-hd { font-size: .66rem; font-weight: 900; letter-spacing: .4px; color: #b35a00; margin-bottom: 3px; }
     .own-mu-modal .mu-row { margin-bottom: 12px; }
     .own-mu-modal label { display: block; font-size: .66rem; font-weight: 900; color: #555; letter-spacing: .5px; margin-bottom: 4px; text-transform: uppercase; }
     .own-mu-modal input[type=date], .own-mu-modal textarea { width: 100%; box-sizing: border-box; border: 1.5px solid #ccc; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: .85rem; }
@@ -1526,6 +1529,7 @@
             <div id="mg-banner" hidden></div>
             <div id="time-slots-container" class="time-slots-wrap"></div>
             <div id="ownMakeupList" class="own-mu-list" style="display:none;"></div>
+            <div id="localArrNotice" class="local-arr-notice" style="display:none;"></div>
 
             <!-- Hidden legacy inputs for JS compatibility -->
             <div style="display:none;" aria-hidden="true">
@@ -2460,6 +2464,8 @@ window.onFacultySelect = async function(empNum) {
     // up being once the awaits (faculty-load fetch, DSS check, etc.) resolve.
     const _facSelectSubject = _currentSubjectCode;
     await _origOnFacultySelect.call(this, empNum);
+    // Switched subjects during the await — don't draw this faculty on the new subject's card.
+    if (_currentSubjectCode !== _facSelectSubject) return;
     await _updateFacultyUnitDisplay(empNum);
 
     if (empNum && _facLoadData && !_lockedFacultyId) {
@@ -2931,6 +2937,12 @@ window.confirmAndPlace = async function() {
         if (!roomVal)       _miss.push('Room');
         if (!dayVal)        _miss.push('Day');
         if (!startVal || !endVal) _miss.push('Time (start and end)');
+        // Never leave a stale faculty card showing while nothing is actually selected.
+        if (!facVal && !_lockedFacultyId && typeof _updateFacultyUnitDisplay === 'function') {
+            document.getElementById('fac_display_name').value = '';
+            document.getElementById('fac_trigger_text').textContent = '-Select Faculty-';
+            _updateFacultyUnitDisplay(null);
+        }
         await showValidationModal('Incomplete Form', 'Missing: ' + _miss.join('; ') + '.');
         return;
     }
@@ -4107,6 +4119,12 @@ async function _onSubjectClick(code, name, units, hours) {
         // populated faculty from the session data — clearing here would blank it before the async
         // reload, causing a visible flash. Skip the clear; _loadExistingSessionsIntoSlices will
         // restore the correct state once it runs.
+        // Only a pill-edit session for THIS (incoming) subject may skip the reset. A session
+        // left over from the previous subject (e.g. a "no change" Save Slice restored it) must
+        // not keep the previous subject's faculty showing on the new subject's panel.
+        const _es     = window.currentEditSession;
+        const _esCode = _es && (_es.subjectcode || _es.subject_code);
+        if (_es && _esCode && _esCode !== code) window.currentEditSession = null;
         if (!window.currentEditSession) {
             _clearFacultyLock(); // also clears _pendingFacultyAssignment
             // Reset faculty selection
@@ -4407,6 +4425,8 @@ async function _onSubjectClick(code, name, units, hours) {
         const _lkId = _lockedFacultyId, _lkName = _lockedFacultyName;
         setTimeout(() => {
             if (_lockedFacultyId !== _lkId) return; // faculty changed since click — abort
+            // A different subject has since been opened — never stamp this subject's faculty on it.
+            if (_myClickToken !== _subjClickToken || _currentSubjectCode !== code) return;
             const _n = document.getElementById('fac-stats-name');
             const _a = document.getElementById('fac-stats-avatar');
             const _b = document.getElementById('fac-stats-body');
@@ -5268,6 +5288,7 @@ function _updateMakeupClassBtn(empNum) {
     const mine = !!empNum && heads.map(String).includes(String(empNum));
     btn.style.display = mine ? '' : 'none';
     if (typeof _loadOwnMakeups === 'function') _loadOwnMakeups(mine);
+    if (typeof _loadLocalArrNotice === 'function') _loadLocalArrNotice();
 }
 
 async function _updateFacultyUnitDisplay(empNum) {
@@ -5643,6 +5664,9 @@ function _refreshAllSliceRoomLists() {
 function tsOpen(p, id) {
     const list = document.getElementById(`${p}-list-${id}`);
     if (!list) return;
+    // Re-check time recommendations against the latest schedules every time the Start
+    // list opens (day/faculty/room or other slices may have changed since last render).
+    if (p === 'tsst' && typeof _renderTimeRecommendations === 'function') _renderTimeRecommendations(id);
     // Reset any previous fixed positioning
     list.style.position = '';
     list.style.top      = '';
@@ -6041,19 +6065,192 @@ function _sliceRequiredMinutes(rowId) {
 // RECOMMENDATIONS (complete start–end pairs), then OTHERS (the regular start times).
 // Generated nodes are tagged .ts-rec-gen and are siblings of the regular items, so
 // tsFilter's search and section-header hiding work on them unchanged.
+/* ── Time-recommendation feasibility ───────────────────────────────────────────
+   Recommendations come from scheduling HISTORY, so on their own they can point at a
+   slot that is already taken this term. Before showing one, check it against what is
+   actually scheduled now — Published AND Draft, saved AND unsaved:
+     • Section : this section's own classes (incl. this subject's other slices)
+     • Faculty : the selected faculty's classes in any section (not TBA)
+     • Room    : the slice's selected room (not TBA)
+   Saved data is fetched once and cached briefly; until it has loaded, no recommendation
+   is shown (never suggest a slot that hasn't been checked). */
+const _REC_BUSY_TTL_MS = 15000;
+window._recBusyCache = window._recBusyCache || {};
+
+// Returns the cached rows, or null while still loading (and starts the load).
+function _recBusyFetch(key, url) {
+    const c = window._recBusyCache[key];
+    if (c && c.rows && Date.now() - c.ts < _REC_BUSY_TTL_MS) return c.rows;
+    if (!c || !c.inflight) {
+        window._recBusyCache[key] = { ts: c?.ts || 0, rows: c?.rows || null, inflight: true };
+        fetch(url).then(r => r.json()).then(rows => {
+            window._recBusyCache[key] = { ts: Date.now(), rows: Array.isArray(rows) ? rows : [], inflight: false };
+        }).catch(() => {
+            window._recBusyCache[key] = { ts: Date.now(), rows: [], inflight: false };
+        }).finally(() => {
+            _recRefreshLater();
+        });
+    }
+    return c && c.rows ? c.rows : null;
+}
+
+window._invalidateRecBusyCache = function() { window._recBusyCache = {}; };
+
+// Busy intervals (minutes) for the slice `rowId`, per day: { Monday: [[s,e],…], … }.
+// Returns null when some needed saved data hasn't loaded yet.
+function _recBusyIntervals(rowId) {
+    const row = document.getElementById(`ts-row-${rowId}`);
+    if (!row) return null;
+    const ay   = document.getElementById('sel_ay')?.value   || '';
+    const sem  = document.getElementById('sel_sem')?.value  || '';
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const sect = document.getElementById('sel_section')?.value || '';
+    const code = String(_currentSubjectCode || '').toUpperCase();
+    const fac  = String(document.getElementById('sel_faculty')?.value || _lockedFacultyId || '');
+    const mode = typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official';
+    const rules = (typeof _officialConflictRulesCache !== 'undefined' && _officialConflictRulesCache)
+        || { faculty: true, room: true, section: true };
+    const slots = typeof timeSlots !== 'undefined' ? timeSlots : _TS_TIMES;
+    const idMin = id => _timeToMinutes(slots[id - 1]);
+
+    // This slice's own saved/loaded booking never blocks itself.
+    let own = {};
+    if (row.dataset.existingJson) { try { own = JSON.parse(row.dataset.existingJson) || {}; } catch (e) {} }
+    const ownTemp = own._localTempId || null;
+    const isOwnDb = s => String(s.subjectcode || '').toUpperCase() === code &&
+        s.daydesc === own.daydesc && Number(s.starttimeid) === Number(own.starttimeid);
+
+    const busy = {};
+    const add = (day, s, e) => {
+        if (!day || s === null || e === null || e <= s) return;
+        (busy[day] = busy[day] || []).push([s, e]);
+    };
+    // A subject's Draft supersedes its Published rows (same rule as the save-time check).
+    const effective = rows => {
+        const drafted = new Set(rows.filter(s => s.status === 'Draft')
+            .map(s => String(s.subjectcode || '').toUpperCase()));
+        return rows.filter(s => !(s.status === 'Published' &&
+            drafted.has(String(s.subjectcode || '').toUpperCase())));
+    };
+    const hiddenDb = s => typeof _isDbRowHidden === 'function' && _isDbRowHidden(s);
+    const pending = (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : [])
+        .filter(c => !c.isPreview && c.ay === ay && c.sem === sem && c.temp_id !== ownTemp);
+
+    // Section
+    if (rules.section && prog && yl && ay && sem) {
+        const rows = _recBusyFetch(`sect|${prog}|${yl}|${ay}|${sem}|${sect}|${mode}`,
+            `/api/manual/section_schedule?program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}` +
+            `&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}` +
+            `&section_id=${encodeURIComponent(sect)}&scheduler_mode=${mode}`);
+        if (rows === null) return null;
+        effective(rows).forEach(s => {
+            if (isOwnDb(s) || hiddenDb(s)) return;
+            add(s.daydesc, idMin(s.starttimeid), idMin(s.endtimeid));
+        });
+        pending.forEach(c => {
+            if (c.section_id && String(c.section_id) !== String(sect)) return;
+            if (c.course !== prog || String(c.year_level) !== String(yl)) return;
+            add(c.day, _timeToMinutes(c.start_time), _timeToMinutes(c.end_time));
+        });
+        // This subject's other slices still being edited in the panel.
+        document.querySelectorAll('.ts-row').forEach(r => {
+            if (r === row) return;
+            add(r.querySelector('.ts-day-sel')?.value || '',
+                _timeToMinutes(r.querySelector('.ts-start-hidden')?.value || ''),
+                _timeToMinutes(r.querySelector('.ts-end-hidden')?.value || ''));
+        });
+    }
+
+    // Faculty
+    if (rules.faculty && fac && fac !== 'TBA' && ay && sem) {
+        const rows = _recBusyFetch(`fac|${fac}|${ay}|${sem}|${mode}`,
+            `/api/manual/faculty_schedule?emp_num=${encodeURIComponent(fac)}` +
+            `&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${mode}`);
+        if (rows === null) return null;
+        const mergeOk = typeof _isSubjectMergeEligible === 'function' && _isSubjectMergeEligible(code);
+        effective(rows).forEach(s => {
+            const sCode = String(s.subjectcode || '').toUpperCase();
+            if (sCode === code && (mergeOk || String(s.section_id || '') === String(sect))) return;
+            if (isOwnDb(s) || hiddenDb(s)) return;
+            add(s.daydesc, idMin(s.starttimeid), idMin(s.endtimeid));
+        });
+        pending.forEach(c => {
+            if (String(c.faculty_id) !== fac) return;
+            if (String(c.subject_code || '').toUpperCase() === code) return;
+            add(c.day, _timeToMinutes(c.start_time), _timeToMinutes(c.end_time));
+        });
+    }
+
+    // Room — reuses the editor's room-occupancy cache (merge-aware ranges).
+    const roomId = row.querySelector('.ts-room-hidden')?.value || '';
+    const _roomKey = `${roomId}|${ay}|${sem}`;
+    window._recRoomTried = window._recRoomTried || {};
+    const _roomLoaded = _roomKey in (window._roomDbCache || {});
+    // A room whose occupancy could not be loaded (fetch failed) is retried at most every
+    // 5 s instead of in a tight refresh loop; meanwhile the room check is skipped (the
+    // save-time room conflict check still applies).
+    const _roomRetryOk = Date.now() - (window._recRoomTried[_roomKey] || 0) > 5000;
+    if (rules.room && roomId && roomId !== 'TBA' && ay && sem && (_roomLoaded || _roomRetryOk)) {
+        if (!_roomLoaded) {
+            window._recRoomTried[_roomKey] = Date.now();
+            if (typeof _prefetchRoomOccupancy === 'function') {
+                _prefetchRoomOccupancy(roomId, ay, sem, { join: true })
+                    .catch(() => {})
+                    .finally(() => _recRefreshLater());
+            }
+            return null;
+        }
+        busy.__room = {};
+        const _days = Array.from(row.querySelector('.ts-day-sel')?.options || []).map(o => o.value).filter(Boolean);
+        _days.forEach(d => {
+            busy.__room[d] = _getOccupiedRanges(roomId, d, ay, sem,
+                ownTemp || ('PREVIEW_' + rowId), own.versionid || null, row.dataset.mergeEvent || '');
+        });
+    }
+    return busy;
+}
+
+// True when start–end on `day` overlaps nothing in `busy`.
+function _recSlotFree(busy, day, start, end) {
+    const sm = _timeToMinutes(start), em = _timeToMinutes(end);
+    if ((busy[day] || []).some(([s, e]) => sm < e && em > s)) return false;
+    const roomRanges = busy.__room && busy.__room[day];
+    if (roomRanges && roomRanges.length) {
+        const si = _TS_TIMES.indexOf(start), ei = _TS_TIMES.indexOf(end);
+        const blocks = r => typeof _mgRangeBlocks === 'function'
+            ? _mgRangeBlocks(r, si, ei) : (si < r.endIdx && ei > r.startIdx);
+        if (roomRanges.some(blocks)) return false;
+    }
+    return true;
+}
+
 function _renderTimeRecommendations(rowId) {
     const row  = document.getElementById(`ts-row-${rowId}`);
     const list = document.getElementById(`tsst-list-${rowId}`);
     if (!row || !list) return;
 
     const requiredMinutes = _sliceRequiredMinutes(rowId);
-    const recs = (window._dssRecommendedTimes || []).filter(r => {
+    const candidates = (window._dssRecommendedTimes || []).filter(r => {
         const sm = _timeToMinutes(r.start), em = _timeToMinutes(r.end);
         if (sm === null || em === null || em <= sm) return false;
         if (requiredMinutes !== null && (em - sm) !== requiredMinutes) return false;
         // Both boundaries must exist in the Manual Editor's actual time-slice scale.
         return _TS_TIMES.includes(r.start) && _TS_TIMES.includes(r.end);
-    }).slice(0, 3);
+    });
+
+    // Drop every pair that is already taken (section / faculty / room). With a Day chosen,
+    // it must be free on that day; with no Day yet, free on at least one allowed day.
+    let recs = [];
+    if (candidates.length) {
+        const busy = _recBusyIntervals(rowId);   // null = still loading → show none yet
+        if (busy) {
+            const day = row.querySelector('.ts-day-sel')?.value || '';
+            const days = day ? [day]
+                : Array.from(row.querySelector('.ts-day-sel')?.options || []).map(o => o.value).filter(Boolean);
+            recs = candidates.filter(r => days.some(d => _recSlotFree(busy, d, r.start, r.end))).slice(0, 3);
+        }
+    }
 
     const sig = recs.map(r => `${r.start}-${r.end}`).join('|');
     if (list.dataset.recSig === sig) return;   // identical markup — don't replace
@@ -6106,6 +6303,10 @@ window._scheduleRecommendationRefresh = function() {
         _recommendationRefreshFrame = setTimeout(run, 0);
     }
 };
+// Re-render recommendations once saved schedule data used by _recBusyIntervals arrives.
+function _recRefreshLater() {
+    if (typeof window._scheduleRecommendationRefresh === 'function') window._scheduleRecommendationRefresh();
+}
 
 function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJson='', skipFullCheck=false) {
     // HC16 group model: a merged subject's slices come only from its Merge Group (RESET TO
@@ -7087,6 +7288,13 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
         const _stampFac = fac;
         const _stampEmpId = String(fac.id);
         setTimeout(() => {
+            // Only re-stamp if this subject is still open AND this faculty is still the one
+            // actually selected/locked. Otherwise (user moved to the next subject within
+            // 700 ms) this would paint the previous subject's faculty onto the new subject's
+            // card while sel_faculty stays empty — the "Incomplete Form: none selected" case.
+            if (!_stillCurrent()) return;
+            const _curFac = String(_lockedFacultyId || document.getElementById('sel_faculty').value || '');
+            if (_curFac !== _stampEmpId) return;
             const avatarEl  = document.getElementById('fac-stats-avatar');
             const nameEl    = document.getElementById('fac-stats-name');
             const typeEl    = document.getElementById('fac-stats-type');
@@ -9458,6 +9666,9 @@ function _applyRoomOccupancyFilter(sliceId) {
     renderGrid = async function(roomId, ayFilter, semFilter) {
         const _key = `${roomId}|${ayFilter}|${semFilter}`;
         delete window._roomDbCache[_key];
+        // Saved schedules may have changed (save/publish/delete) — re-check time
+        // recommendations against fresh section/faculty data next time they render.
+        if (typeof window._invalidateRecBusyCache === 'function') window._invalidateRecBusyCache();
         delete _roomDbInflight[_key];          // a fetch started before this point is stale
         const _seqAtInvalidate = _roomDbSeq;
         // Day-keyed occupancy isn't scoped to a single room — clear it all so the next
@@ -10120,6 +10331,35 @@ async function _loadOwnMakeups(mine, force = false) {
     } catch (e) { /* the list is informational; the button still works */ }
 }
 
+/* Official mode: the open subject has a Local Arrangement (e.g. from an approved faculty
+   adjustment). It was made from the current Official schedule, so publishing a change to
+   this subject removes it (see _plan_local_for_official_republish) — say so up front. */
+let _localArrKey = '';
+async function _loadLocalArrNotice() {
+    const box = document.getElementById('localArrNotice');
+    if (!box) return;
+    const code = String(_currentSubjectCode || '').toUpperCase();
+    const v = id => document.getElementById(id)?.value || '';
+    const sect = v('sel_section'), prog = v('sel_prog'), yl = v('sel_year'), ay = v('sel_ay'), sem = v('sel_sem');
+    const hide = () => { box.style.display = 'none'; box.innerHTML = ''; };
+    if (IS_LOCAL || !code || !sect || !prog || !yl || !ay || !sem) { hide(); _localArrKey = ''; return; }
+    const key = [code, sect, prog, yl, ay, sem].join('|');
+    _localArrKey = key;
+    try {
+        const d = await fetch(`/api/schedule/local_republish_impact?program=${encodeURIComponent(prog)}` +
+            `&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}` +
+            `&sem=${encodeURIComponent(sem)}&section_id=${encodeURIComponent(sect)}`).then(r => r.json());
+        if (_localArrKey !== key) return;                    // subject changed meanwhile
+        const rows = (d.success ? d.sessions || [] : []).filter(s => String(s.subjectcode || '').toUpperCase() === code);
+        if (!rows.length) { hide(); return; }
+        const slot = s => `${_ownMuEsc(s.daydesc)} ${_ownMuEsc(s.start_time)} – ${_ownMuEsc(s.end_time)}${s.roomname ? ' · ' + _ownMuEsc(s.roomname) : ''}`;
+        box.innerHTML = `<div class="lan-hd"><i class="fas fa-triangle-exclamation"></i> HAS A LOCAL ARRANGEMENT</div>
+            This class is currently held at <b>${rows.map(slot).join('; ')}</b> (Local).
+            It was based on this Official schedule, so if you change and publish it, the Local arrangement is removed.`;
+        box.style.display = '';
+    } catch (e) { hide(); }
+}
+
 function _renderOwnMakeups(list) {
     const box = document.getElementById('ownMakeupList');
     if (!box) return;
@@ -10127,8 +10367,8 @@ function _renderOwnMakeups(list) {
     box.style.display = '';
     box.innerHTML = list.map(m => `
         <div class="own-mu-card${m.past ? ' own-mu-past' : ''}">
-            ${m.past ? '' : `<button type="button" class="own-mu-x" title="Remove this make-up class" onclick="_cancelOwnMakeup(${m.requestid})"><i class="fas fa-times"></i></button>`}
-            <div class="own-mu-head"><span class="own-mu-tag">MAKE UP CLASS</span><span class="own-mu-status">${m.status === 'Approved' ? 'APPROVED' : _ownMuEsc(m.status).toUpperCase()}</span>${m.past ? '<span>· DONE</span>' : ''}</div>
+            ${m.started ? '' : `<button type="button" class="own-mu-x" title="Remove this make-up class" onclick="_cancelOwnMakeup(${m.requestid})"><i class="fas fa-times"></i></button>`}
+            <div class="own-mu-head"><span class="own-mu-tag">MAKE UP CLASS</span><span class="own-mu-status">${m.status === 'Approved' ? 'APPROVED' : _ownMuEsc(m.status).toUpperCase()}</span>${m.past ? '<span>· DONE</span>' : (m.started ? '<span>· IN PROGRESS</span>' : '')}</div>
             <div class="own-mu-body"><b>${_ownMuEsc(m.date_label)}</b><br>${_ownMuEsc(m.start_time)} – ${_ownMuEsc(m.end_time)} · ${_ownMuEsc(m.room)}
                 ${m.reason ? `<div class="own-mu-reason">${_ownMuEsc(m.reason)}</div>` : ''}</div>
         </div>`).join('');
@@ -12001,9 +12241,22 @@ async function restoreVersion(versionId, btn) {
         : '?';
     const _rLabel = `R${_typeVn}`;
 
+    // This section's Local Arrangements are tied to the current Published schedule: once
+    // the restored Draft is published, those of subjects it changes are removed.
+    let _localLine = '';
+    try {
+        const v = id => document.getElementById(id)?.value || '';
+        const d = await fetch(`/api/schedule/local_republish_impact?program=${encodeURIComponent(v('sel_prog'))}` +
+            `&year_level=${encodeURIComponent(v('sel_year'))}&ay_id=${encodeURIComponent(v('sel_ay'))}` +
+            `&sem=${encodeURIComponent(v('sel_sem'))}&section_id=${encodeURIComponent(v('sel_section'))}`).then(r => r.json());
+        const subs = [...new Set((d.success ? d.sessions || [] : []).map(s => s.subjectcode))];
+        if (subs.length) _localLine = `\n\nThis section has Local arrangements (${subs.join(', ')}). ` +
+            `If you publish the restored Draft, the ones whose schedule it changes will be removed.`;
+    } catch (e) { /* informational — Publish still confirms it */ }
+
     // Step 1 — first confirmation
     const step1 = await showConfirmModal(
-        `You are about to restore Revision ${_rLabel} as a new Draft.\n\nIt replaces this section's current Draft. The Published schedule stays live until you publish the restored Draft.`,
+        `You are about to restore Revision ${_rLabel} as a new Draft.\n\nIt replaces this section's current Draft. The Published schedule stays live until you publish the restored Draft.${_localLine}`,
         `Restore Revision ${_rLabel}`
     );
     if (!step1) return;

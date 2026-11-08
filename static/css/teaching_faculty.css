@@ -587,3 +587,48 @@ tfoot .total-units {
     border: 1px solid #e0e0e0;
     background-color: #f5f5f5;
 }
+/* ══ Phones (≤ 600px): compact header, stats in one row, full-width controls ══
+   Shared by Faculty → My Weekly Schedule and Academic Head → My Teaching Assignment. */
+@media (max-width: 600px) {
+    .teaching-assignment-wrapper { padding: 14px 12px; }
+
+    .ta-page-header { gap: 12px; margin-bottom: 14px; }
+    .ta-page-title { width: 100%; gap: 8px; }
+    .ta-page-title > i { font-size: 1.25rem; }
+    .ta-page-title h1 { font-size: 1.05rem; }
+
+    /* Stat cards side by side instead of one tall stack */
+    .ta-stat-row { display: grid; width: 100%; gap: 8px; }
+    #statsWeekly     { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    #statsAssignment { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ta-stat-card {
+        min-width: 0; padding: 10px; gap: 6px;
+        flex-direction: column-reverse; align-items: flex-start; justify-content: flex-start;
+    }
+    .ta-stat-icon { width: 26px; height: 26px; font-size: 0.8rem; border-radius: 6px; }
+    .ta-stat-num { font-size: 1.25rem; }
+    .ta-stat-label { font-size: 0.6rem; line-height: 1.2; margin-top: 2px; }
+
+    /* Tabs: two equal halves, single line */
+    .ta-tabs-row { gap: 10px; }
+    .tabs-container { width: 100%; }
+    .tab-link {
+        flex: 1; justify-content: center; padding: 10px 6px;
+        font-size: 0.8rem; white-space: nowrap; gap: 6px;
+    }
+
+    /* Official/Local toggle stretches; Export stays compact beside it */
+    .ta-shared-toolbar { width: 100%; gap: 8px; margin-bottom: 0; }
+    .ta-schedule-toggle { flex: 1; display: flex; }
+    .ta-toggle-btn { flex: 1; padding-left: 6px; padding-right: 6px; font-size: 0.68rem; }
+    .btn-export-pdf { flex: none; padding-left: 12px; padding-right: 12px; }
+
+    /* Week nav on one line, program filter full width under it */
+    .ta-week-toolbar { gap: 8px; }
+    .ta-nav-group { width: 100%; flex-wrap: wrap; row-gap: 6px; }
+    .ta-week-label { font-size: 0.78rem; margin-left: 4px; flex: 1; min-width: 0; }
+    .ta-program-filter { width: 100%; }
+    .ta-program-filter select { width: 100%; }
+
+    .ta-legend-row { gap: 6px 12px; }
+}

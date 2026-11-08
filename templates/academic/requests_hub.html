@@ -990,9 +990,12 @@ function rhubRenderDetail(req, v) {
                 ? `<div class="rhub-analytics-msg" style="color:#1a4a7a"><i class="fas fa-landmark"></i> Can be applied to the Official schedule — every hard constraint and Setting passes.</div>`
                 : `<div class="rhub-analytics-msg" style="color:#8a5a00"><i class="fas fa-landmark"></i> Cannot be applied to the Official schedule: ${_rhubEsc(v.official_error || '')} It can still be approved as a Local arrangement.</div>`)
             : '';
+        const shadowHtml = (v.official_ok && (v.official_shadowed || []).length)
+            ? `<div class="rhub-analytics-msg" style="color:#8a5a00;background:#fff8e6;border:1px solid #f0c36d;border-radius:6px;padding:8px 10px;margin-top:8px;">${_rhubShadowNote(v.official_shadowed)}</div>`
+            : '';
         analyticsHtml = `
             <div class="rhub-chips">${mBadge}${rBadge}${fBadge}${sBadge}${pBadge}</div>
-            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${laterHtml}${warnHtml}${offHtml}${draftHtml}`
+            <div class="rhub-analytics-msg" style="color:${msgColor}">${msg}</div>${laterHtml}${warnHtml}${offHtml}${shadowHtml}${draftHtml}`
             + ((v.merge_with || []).length && v.merge_over_limit ? `
             <div class="rhub-merge-note rhub-merge-over"><i class="fas fa-triangle-exclamation"></i> <b>Over the merge limit:</b>
                 merging ${_rhubEsc(req.section_name || 'this section')} with <b>${v.merge_with.map(_rhubEsc).join(' + ')}</b> would make
@@ -1075,7 +1078,7 @@ function rhubRenderDetail(req, v) {
             The faculty can submit a new request for another date.
         </div>` : ''}
 
-        <div class="rhub-dbox-lbl" style="margin-bottom:8px">${reqLabel}${
+        <div class="rhub-dbox-lbl" style="margin-bottom:10px;font-size:0.95rem;color:#111;letter-spacing:0.5px">${reqLabel}${
             req.status === 'Approved' && req.applied_to
                 ? ` · <span style="color:#1a6b3c">${req.apply_on ? 'WILL APPLY' : 'APPLIED'} TO ${req.applied_to === 'Official' ? 'OFFICIAL SCHEDULE' : 'LOCAL ARRANGEMENT'}</span>` : ''}</div>
         ${req.status === 'Approved' && req.apply_on ? `<div class="rhub-local-warn" style="margin:0 0 10px;">
@@ -1182,10 +1185,25 @@ function rhubApprove(applyTo) {
             : 'Applied as a Local arrangement for the rest of the semester; the Official schedule (SIS) stays as it is.';
     // Approving into the Official schedule archives the class's whole Local arrangement.
     const lw = document.getElementById('approveModalLocal');
-    const lwHtml = !isMakeup && _approveApplyTo === 'official' ? _rhubLocalWarn(req, true) : '';
+    const _shadow = (!isMakeup && _approveApplyTo === 'official' && req._v && req._v.official_shadowed) || [];
+    const lwHtml = (!isMakeup && _approveApplyTo === 'official' ? _rhubLocalWarn(req, true) : '')
+        + (_shadow.length ? `<div>${_rhubShadowNote(_shadow)}</div>` : '');
     lw.innerHTML = lwHtml; lw.style.display = lwHtml ? '' : 'none';
     document.getElementById('approveModal').classList.add('open');
 }
+/* Official classes at the new slot that are free only because of their Local arrangement
+   (api_requests_validate → official_shadowed): approving into Official double-books them there. */
+function _rhubShadowNote(list) {
+    const slot = (d, a, b, r) => `${_rhubEsc(d)} ${_rhubEsc(a)} – ${_rhubEsc(b)}${r ? ' · ' + _rhubEsc(r) : ''}`;
+    const items = list.map(x => `<li><b>${_rhubEsc(x.subjectcode)}${x.sectionname ? ' (' + _rhubEsc(x.sectionname) + ')' : ''}</b>:
+        Official ${slot(x.daydesc, x.start_t, x.end_t, x.roomname)} <i class="fas fa-arrow-right"></i>
+        <b>${slot(x.l_day, x.l_start, x.l_end, x.l_room)}</b> (its Local schedule)</li>`).join('');
+    return `<i class="fas fa-circle-info"></i> <b>This slot is still in the Official schedule of another class</b>, which is held elsewhere by a Local arrangement.
+        <b>Approve &amp; Update Official</b> also makes that Local schedule its Official schedule (its Local arrangement is then removed):
+        <ul style="margin:6px 0 0 18px;padding:0;">${items}</ul>
+        <b>Approve as Local</b> changes neither class's Official schedule.`;
+}
+
 /* The class's active Local arrangement, which an approval into the Official schedule
    removes (the subject is republished; its Local sessions are archived). '' when none. */
 function _rhubLocalWarn(req, inDialog) {

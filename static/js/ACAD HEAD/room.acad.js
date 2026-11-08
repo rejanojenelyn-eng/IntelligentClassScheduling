@@ -761,12 +761,6 @@ async function roomSchedExecuteExport() {
     }
 }
 
-// ── Back/forward-cache guard ───────────────────────────────────────────────────
-// If the browser restores this page from bfcache (e.g. a real edit shows the
-// "Room Updated" toast, the user navigates away before its 4s timer clears it,
-// then hits Back), the DOM/JS snapshot is frozen exactly as it was — including
-// the toast still mid-display and any modal left open. Reset that stale state
-// instead of letting a past action's success message resurface on return.
 window.addEventListener('pageshow', function (e) {
     if (!e.persisted) return;
     document.getElementById('roomCrudToast')?.classList.remove('rm-show');
