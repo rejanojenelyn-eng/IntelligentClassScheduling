@@ -1701,6 +1701,19 @@ function initProgramPanel() {
   const saved = localStorage.getItem('settings_pm_selected');
   const found = saved && PM_DATA.programs.find(p => p.programcode === saved);
   selectProgram(found ? saved : PM_DATA.programs[0].programcode);
+  _scrollPmListToSelected();
+}
+
+/* After a reload, bring the selected program into view in the sidebar list (e.g. a
+   just-added program far down the list). Scrolls only the list, never the page. */
+function _scrollPmListToSelected() {
+  const list = document.getElementById('pmList');
+  const item = list && list.querySelector('.pm-list-item.active');
+  if (!item) return;
+  const lr = list.getBoundingClientRect(), ir = item.getBoundingClientRect();
+  if (ir.top < lr.top || ir.bottom > lr.bottom) {
+    list.scrollTop += (ir.top - lr.top) - (lr.height - ir.height) / 2;
+  }
 }
 
 /* ── Helpers ────────────────────────────────────────── */
@@ -2099,6 +2112,12 @@ async function _submitAddProgram() {
     const data = await resp.json();
     if (data.success) {
       showAlertPopup('success', data.message || 'Program added.');
+      // Open the newly added program after the reload instead of the last one viewed.
+      const newCode = data.programcode
+        || String(new FormData(form).get('program_code') || '').trim().toUpperCase();
+      if (newCode) {
+        try { localStorage.setItem('settings_pm_selected', newCode); } catch (_) {}
+      }
       setTimeout(() => window.location.reload(), 900);
     } else {
       showAlertPopup('error', data.error || 'Could not add program.');
