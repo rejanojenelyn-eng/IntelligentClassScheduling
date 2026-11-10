@@ -956,13 +956,14 @@ def designee_night_limit_detail(fac: dict, allowance: int, night_days) -> str:
     name = fac.get('fullname') or fac.get('employeenumber') or 'This designee'
     days = sort_days(night_days)
     n    = len(days)
-    used = f'{n} night teaching day{"s" if n != 1 else ""} ({", ".join(days)})'
+    used = f'{n} night teaching weekday{"s" if n != 1 else ""} ({", ".join(days)})'
+    # Wording follows the Settings field "Allowed Night Teaching in Weekdays".
     if allowance == 0:
-        return (f'{name}\'s designation does not allow PT/Night Teaching Service '
+        return (f'{name}\'s designation does not allow night teaching in weekdays '
                 f'({format_time_12h(NIGHT_SERVICE_START)}–{format_time_12h(NIGHT_SERVICE_END)}), '
                 f'but the current schedule uses {used}.')
-    return (f'{name} is allowed up to {allowance} PT/night teaching '
-            f'day{"s" if allowance != 1 else ""} per week for this designation, '
+    return (f'{name} is allowed night teaching on up to {allowance} '
+            f'weekday{"s" if allowance != 1 else ""} per week for this designation, '
             f'but the current schedule uses {used}.')
 
 
@@ -1346,7 +1347,7 @@ class CSPValidator:
                     f'{format_time_12h(first)}–{format_time_12h(w["regular_end"])} counts as Regular '
                     f'(or TS once Regular hours are full), '
                     f'{format_time_12h(w["regular_end"])}–{format_time_12h(w["pm_end"])} as PT/TS, and '
-                    f'{format_time_12h(w["pm_end"])}–{format_time_12h(w["night_end"])} as Night Teaching Service. '
+                    f'{format_time_12h(w["pm_end"])}–{format_time_12h(w["night_end"])} as night teaching. '
                     f'Only the part{"s" if len(bad) > 1 else ""} listed falls outside all of these.'
                 ),
             })

@@ -32,7 +32,7 @@
     <div class="cm-toolbar">
       <label class="cm-search">
         <i class="fas fa-magnifying-glass"></i>
-        <input type="text" id="searchAssign" placeholder="Search program or curriculum..." oninput="filterAssignments()">
+        <input type="text" id="searchAssign" placeholder="Search program, curriculum, or section (e.g. BSIT 1)..." oninput="filterAssignments()">
       </label>
       <label class="cm-select">
         <i class="fas fa-book-open"></i>
@@ -60,6 +60,19 @@
         </span>
         <i class="fas fa-chevron-down cm-caret"></i>
       </label>
+      <label class="cm-select">
+        <i class="fas fa-layer-group"></i>
+        <span class="cm-select-body">
+          <span class="cm-select-label">Year Level</span>
+          <select id="filterAssignYl" onchange="filterAssignments()">
+            <option value="">All Year Levels</option>
+            {% for yl in cohorts|map(attribute='yearlevel')|reject('none')|unique|sort %}
+            <option value="{{ yl }}">Year {{ yl }}</option>
+            {% endfor %}
+          </select>
+        </span>
+        <i class="fas fa-chevron-down cm-caret"></i>
+      </label>
       <span class="cm-divider" aria-hidden="true"></span>
       <label class="cm-select cm-select-sort">
         <i class="fas fa-arrow-up-arrow-down"></i>
@@ -78,7 +91,7 @@
     </div>
 
     <!-- Section heading + summary pill (program count · academic year filter) -->
-    {% set _entry_years = cohorts|map(attribute='academicyearid')|select|unique|sort|list %}
+    {% set _school_years = cohorts|map(attribute='school_ay')|select|unique|sort|list %}
     <div class="cm-section-head">
       <div class="cm-section-title">
         <h2>Active Assignments</h2>
@@ -87,11 +100,11 @@
       <div class="cm-summary">
         <span class="cm-summary-item"><i class="fas fa-users"></i> <strong id="assignProgCount">0</strong>&nbsp;programs</span>
         <span class="cm-summary-sep" aria-hidden="true"></span>
-        <label class="cm-summary-item cm-summary-ay" title="Year entry">
+        <label class="cm-summary-item cm-summary-ay" title="Academic year — every year level's curriculum in that school year">
           <i class="far fa-calendar"></i>
           <select id="filterAssignAy" onchange="filterAssignments()">
-            {% for ay in _entry_years|reverse %}
-            <option value="{{ ay }}">{{ ay[:2] }} {{ ay[2:] }}</option>
+            {% for ay in _school_years|reverse %}
+            <option value="{{ ay }}" {% if ay == active_ay %}selected{% endif %}>AY 20{{ ay[2:4] }}-20{{ ay[4:6] }}</option>
             {% endfor %}
             <option value="">All years</option>
           </select>
@@ -107,20 +120,21 @@
             <th class="cm-sortable" data-sort="curr" onclick="setAssignSort('curr')">Curriculum <i class="fas fa-sort"></i></th>
             <th class="cm-sortable" data-sort="prog" onclick="setAssignSort('prog')">Academic Program <i class="fas fa-sort"></i></th>
             <th class="cm-sortable cm-center" data-sort="yl" onclick="setAssignSort('yl')">Year Level <i class="fas fa-sort"></i></th>
-            <th class="cm-sortable cm-center" data-sort="ay" onclick="setAssignSort('ay')">Year Entry <i class="fas fa-sort"></i></th>
+            <th class="cm-sortable cm-center" data-sort="entry" onclick="setAssignSort('entry')">Year Entry <i class="fas fa-sort"></i></th>
             <th class="cm-sortable cm-center" data-sort="sect" onclick="setAssignSort('sect')">Sections <i class="fas fa-sort"></i></th>
           </tr>
         </thead>
         <tbody>
           {% for c in cohorts %}
           <tr data-curr="{{ c.curriculumcode or '' }}" data-prog="{{ c.offeringcode }} — {{ c.programname }}"
-              data-progcode="{{ c.programcode }}" data-ay="{{ c.academicyearid or '' }}"
+              data-progcode="{{ c.programcode }}" data-ay="{{ c.school_ay or '' }}"
+              data-entry="{{ c.academicyearid or '' }}" data-sects="{{ c.section_names or '' }}"
               data-yl="{{ c.yearlevel }}" data-sect="{{ c.section_count or 0 }}">
             <td>{% if c.curriculumcode %}<span class="cm-code-pill">{{ c.curriculumcode }}</span>{% else %}<span class="cm-none">&mdash;</span>{% endif %}</td>
             <td class="cm-prog">{{ c.offeringcode }} — {{ c.programname }}</td>
             <td class="cm-center"><span class="cm-chip">{{ c.yearlevel }}</span></td>
             <td class="cm-center">{{ c.academicyearid or '—' }}</td>
-            <td class="cm-center"><span class="cm-chip">{{ c.section_count or 0 }}</span></td>
+            <td class="cm-center"><span class="cm-chip" title="{{ c.section_names or '' }}">{{ c.section_count or 0 }}</span></td>
           </tr>
           {% endfor %}
         </tbody>

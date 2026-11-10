@@ -1410,7 +1410,10 @@ function _renderProgPills(sessions, prog, yl) {
             pill.style.cursor = 'pointer';
             pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
             pill.dataset.tempId  = sess.temp_id || '';   // see renderGrid — drag & drop
-            if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
+            if (_activeKey && pill.dataset.pillKey === _activeKey) {
+                pill.classList.add('pill-slice-active');
+                if (typeof _scrollToActivePillIfNew === 'function') _scrollToActivePillIfNew();
+            }
 
             const _resolvedInstr = _resolveInstructorName(sess);
             const instrLast = (_resolvedInstr || 'TBA').split(',')[0].trim();
@@ -2064,11 +2067,11 @@ async function confirmAndPlace() {
                 // Local mode: soft constraint — warn but allow override
                 const proceed = await showConfirmModal(
                     `[Local Override] ${nightViol.detail} Local Scheduler allows this override. Proceed?`,
-                    'HC Override — Night Teaching Service'
+                    'HC Override — Night Teaching in Weekdays'
                 );
                 if (!proceed) return;
             } else {
-                await showValidationModal('Night Teaching Service Limit', nightViol.detail);
+                await showValidationModal('Night Teaching Limit', nightViol.detail);
                 return;
             }
         }
@@ -2600,7 +2603,31 @@ async function _dropSessionImpl(sessDataEncoded) {
             }
         } catch(e) {}
     });
+    // An unsaved slice (new, or a duplicate) is tied to its pill only by its preview entry
+    // PREVIEW_<row id> — it has no existingJson, so the loop above never matched it and the
+    // slice stayed in the panel after its pill was deleted on the calendar.
+    const _pvMatch = /^PREVIEW_(.+)$/.exec(String(sd.temp_id || ''));
+    if (_pvMatch) {
+        const _pvRow = document.getElementById(`ts-row-${_pvMatch[1]}`);
+        if (_pvRow && !_pvRow.dataset.existingJson) {
+            const _pvId = parseInt(_pvMatch[1]);
+            if (typeof _activeSliceId !== 'undefined' && String(_activeSliceId) === String(_pvMatch[1])) _activeSliceId = null;
+            if (typeof _dirtySliceIds !== 'undefined') _dirtySliceIds.delete(_pvId);
+            _pvRow.remove();
+        }
+    }
     if (typeof _renumberSlices === 'function') _renumberSlices();
+    if (typeof _dropOrphanDupTags === 'function') _dropOrphanDupTags();
+    // Hours shown in the panel / subject card follow the removal right away.
+    {
+        const _dAy = document.getElementById('sel_ay')?.value || '', _dSem = document.getElementById('sel_sem')?.value || '';
+        if (typeof _currentSubjectCode !== 'undefined' && _currentSubjectCode && _dAy && _dSem &&
+                typeof _updateUnitProgress === 'function') {
+            const _dm = (typeof _subjectMeta !== 'undefined' && _subjectMeta[_currentSubjectCode]) || {};
+            _updateUnitProgress(_currentSubjectCode, _dAy, _dSem, _dm.units || 0, _dm.total_hours || 0);
+        }
+        if (typeof _syncSubjectCardBars === 'function') _syncSubjectCardBars();
+    }
 
     const currentRoom = document.getElementById('sel_room').value;
     if (currentMode === 'program') renderProgramTimetable();
@@ -3131,6 +3158,38 @@ function _partlyFilledSlices() {
 }
 window._partlyFilledSlices = _partlyFilledSlices;
 
+// After a successful publish: reload the open subject's Time Slices from the DB so they
+// show as Published (clean, not "new"). Never throws.
+async function _refreshPanelAfterPublish(subjAtStart, prog, yl, ay, sem) {
+    const currentSubj2 = document.getElementById('sel_subj').value;
+    if (currentSubj2 !== subjAtStart) {
+        // The user already switched to a different subject — that subject's panel was
+        // loaded by _onSubjectClick. Refreshing from data scoped to the subject that was
+        // just published would clobber it with stale leftovers.
+        return;
+    }
+    if (!currentSubj2) { try { resetFormState(); } catch (e) {} return; }
+    try {
+        // Use existing_sessions (returns both Draft and Published with correct statuses)
+        // so the editor immediately shows the correct Published/remaining-Draft state.
+        const _sectId2 = document.getElementById('sel_section')?.value || '';
+        const exResp2 = await _approveFetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
+        const exData2 = await exResp2.json();
+        if (document.getElementById('sel_subj').value !== currentSubj2) return;
+        if (exData2.success && exData2.sessions && exData2.sessions.length) {
+            if (typeof _loadExistingSessionsIntoSlices === 'function') {
+                await _loadExistingSessionsIntoSlices(exData2.sessions);
+            }
+        } else {
+            document.getElementById('time-slots-container').innerHTML = '';
+            if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+        }
+    } catch (e) {
+        document.getElementById('time-slots-container').innerHTML = '';
+        if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
+    }
+}
+
 window._runManualApproveImpl = async function(opts = {}) {
     const auto = !!opts.auto;
     const ay   = formAyFilter();
@@ -3469,48 +3528,33 @@ window._runManualApproveImpl = async function(opts = {}) {
                     ? `\n\n${data.archived_local_arrangements} Local Scheduler arrangement` +
                       `${data.archived_local_arrangements === 1 ? ' was' : 's were'} archived for this section.`
                     : '';
+                pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
+                if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
+                else hiddenDbSchedules.clear();
+                // Refresh the panel, subject list and grid WHILE the success modal is on screen
+                // (not after it is dismissed). Previously this all waited for "Okay, Got It",
+                // so for 1–2s afterwards the just-published slices still sat in the panel as
+                // new rows and clicking the next subject raised a false "Unsaved Changes".
+                // _onSubjectClick waits on window._postPublishPanelReady before judging what
+                // is unsaved, so even a very fast click never sees the stale panel.
+                const _panelReady = _refreshPanelAfterPublish(_uiSubjAtApproveStart, prog, yl, ay, sem);
+                window._postPublishPanelReady = _panelReady;
+                const _restReady = _panelReady.then(async () => {
+                    if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+                    if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
+                    // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
+                    if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
+                    if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
+                }).catch(() => {}).finally(() => {
+                    if (window._postPublishPanelReady === _panelReady) window._postPublishPanelReady = null;
+                });
                 await showValidationModal(auto ? 'Faculty Changed — Auto-saved' : 'Schedule Published',
                     (auto ? (opts.reasonLine ? opts.reasonLine + '\n\n' : '') +
                            'Status: Published (unchanged). The new faculty is now live on the published schedule.'
                          : 'The schedule has been published successfully.') + _localNote);
-                pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
-                if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
-                else hiddenDbSchedules.clear();
-                const currentSubj2 = document.getElementById('sel_subj').value;
-                if (currentSubj2 !== _uiSubjAtApproveStart) {
-                    // The user switched to a different subject while the publish request and
-                    // the confirmation modal above were pending — that subject's panel was
-                    // already correctly loaded by _onSubjectClick. Refreshing here from data
-                    // scoped to the subject that was actually just published would clobber it
-                    // with stale leftovers (e.g. the faculty box still showing the published
-                    // subject's faculty on top of a freshly-opened, unrelated subject).
-                } else if (currentSubj2) {
-                    try {
-                        // Use existing_sessions (returns both Draft and Published with correct statuses)
-                        // so the editor immediately shows the correct Published/remaining-Draft state.
-                        const _sectId2 = document.getElementById('sel_section')?.value || '';
-                        const exResp2 = await _approveFetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj2)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${_sm()}&section_id=${encodeURIComponent(_sectId2)}`);
-                        const exData2 = await exResp2.json();
-                        if (exData2.success && exData2.sessions && exData2.sessions.length) {
-                            if (typeof _loadExistingSessionsIntoSlices === 'function') {
-                                await _loadExistingSessionsIntoSlices(exData2.sessions);
-                            }
-                        } else {
-                            document.getElementById('time-slots-container').innerHTML = '';
-                            if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
-                        }
-                    } catch(e) {
-                        document.getElementById('time-slots-container').innerHTML = '';
-                        if (typeof addNewTimeSlot === 'function') addNewTimeSlot('','','','','',true);
-                    }
-                } else {
-                    resetFormState();
-                }
-                if (typeof _updateSubjectList === 'function') await _updateSubjectList();
-                if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
-                // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
-                if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
-                if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
+                // Keep the Approve in-flight guard until the refresh is done, so a second
+                // Approve never runs against a half-refreshed panel.
+                await _restReady;
                 setTimeout(() => window.isLeavingIntentionally = false, 100);
                 return true;
             } else if (data.violations && data.violations.length) {
@@ -3832,7 +3876,10 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                 pill.dataset.pillKey = `${sess.subjectcode}_${sess.daydesc}_${sess.starttimeid}`;
                 // The open section's own entry — lets calendar drag & drop find its Time Slice.
                 pill.dataset.tempId = (sess._deleteTarget || sess).temp_id || '';
-                if (_activeKey && pill.dataset.pillKey === _activeKey) pill.classList.add('pill-slice-active');
+                if (_activeKey && pill.dataset.pillKey === _activeKey) {
+                    pill.classList.add('pill-slice-active');
+                    if (typeof _scrollToActivePillIfNew === 'function') _scrollToActivePillIfNew();
+                }
 
                 const instrLast = (_resolveInstructorName(sess) || 'TBA').split(',')[0].trim();
 

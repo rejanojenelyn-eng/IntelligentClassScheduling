@@ -107,7 +107,7 @@ def test_save_draft_blocks_a_night_class_the_designation_does_not_allow(tx, worl
     data = res.get_json()
     assert res.status_code == 400 and data['success'] is False
     assert data['code'] == 'HC8_NIGHT_LIMIT'
-    assert 'does not allow PT/Night Teaching Service' in data['error']
+    assert 'does not allow night teaching in weekdays' in data['error']
     assert _drafts(tx, world) == before
 
 

@@ -71,7 +71,7 @@ def test_1_allowance_zero_tuesday_night_is_invalid():
     assert len(hc8) == 1
     assert hc8[0]['allowed_nights'] == 0
     assert hc8[0]['night_days'] == ['Tuesday']
-    assert "does not allow PT/Night Teaching Service" in hc8[0]['detail']
+    assert "does not allow night teaching in weekdays" in hc8[0]['detail']
     # One precise reason — not also a misleading "outside these windows" HC4.
     assert 'HC4' not in _rules(v)
 
@@ -128,8 +128,8 @@ def test_6_allowance_two_mon_wed_fri_is_invalid_with_spec_message():
     hc8 = _hc8(v)
     assert len(hc8) == 1
     assert hc8[0]['detail'] == (
-        'Dean Cruz is allowed up to 2 PT/night teaching days per week for this '
-        'designation, but the current schedule uses 3 night teaching days '
+        'Dean Cruz is allowed night teaching on up to 2 weekdays per week for this '
+        'designation, but the current schedule uses 3 night teaching weekdays '
         '(Monday, Wednesday, Friday).')
     assert hc8[0]['faculty_id'] == 'F1'
     assert set(hc8[0]['subject'].split('/')) == {'A', 'B', 'C'}

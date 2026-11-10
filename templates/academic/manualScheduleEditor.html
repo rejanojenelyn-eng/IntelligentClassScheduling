@@ -1009,8 +1009,9 @@
             <div class="cg-header">
                 <span class="cg-title"><i class="fas fa-list-alt cg-title-icon"></i> CURRICULUM GUIDE</span>
                 <!-- The C.Y badge doubles as the Regular/Bridging picker's trigger when this section's
-                     program+year has a sibling Bridging curriculum (see _toggleCgCurrMenu). The choice
-                     is per-section and per-session only — never persisted (see _onCurriculumModeChange). -->
+                     year level has Bridging subjects (see _cgPickerAvailable / _toggleCgCurrMenu). The
+                     choice is saved on the section and locks once it has a schedule or an assigned
+                     faculty (see _onCurriculumModeChange). -->
                 <div class="cg-cy-wrap" id="cg-cy-wrap" style="display:none;">
                     <span id="cg-cy-label" class="cg-cy-label" onclick="_toggleCgCurrMenu(event)"></span>
                     <div class="bc-dropdown" id="cg-curr-menu">
@@ -1865,8 +1866,31 @@ function _highlightAndScrollPill(pillKey) {
     // Scroll the first matching pill into view within the calendar container
     const first = pills[0];
     if (first) {
+        _lastScrolledSliceSpot = _activeSliceSpot(pillKey);
         first.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     }
+}
+
+// Real-time follow: while a slice is selected, editing its Day / Start / Room moves its pill.
+// The renderers call _scrollToActivePillIfNew() when they draw the selected slice's pill, so
+// the calendar scrolls to it right away — previously only a click on the slice (_selectSlice)
+// scrolled, so e.g. a new 7:30 AM slice stayed off-screen while the grid was still showing
+// 6–9 PM, until the slice was clicked again. Only scrolls when the pill's spot changed, so
+// ordinary re-renders never yank the calendar back after the user scrolled away.
+let _lastScrolledSliceSpot = '';
+function _activeSliceSpot(key) {
+    return `${key}|${currentMode}|${document.getElementById('sel_room')?.value || ''}`;
+}
+function _scrollToActivePillIfNew() {
+    const key = _activeSlicePillKey();
+    if (!key || _activeSliceSpot(key) === _lastScrolledSliceSpot) return;
+    requestAnimationFrame(() => {   // pill is in the DOM by now
+        if (_activeSlicePillKey() !== key) return;
+        const pill = document.querySelector(`.schedule-pill[data-pill-key="${CSS.escape(key)}"]`);
+        if (!pill || !pill.isConnected) return;
+        _lastScrolledSliceSpot = _activeSliceSpot(key);
+        pill.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    });
 }
 
 function _markSliceDirty(id) {
@@ -3377,20 +3401,21 @@ function _updateCurriculumModeSelectVisibility() {
     if (optReg)    optReg.textContent    = cyFmt;
     if (optBridge) optBridge.textContent = `${cyFmt} - BRIDGING`;
 
-    if (_curriculumHasBridgingSibling) {
+    if (_cgPickerAvailable()) {
         const _cgLabelText = _curriculumViewMode === 'bridging' ? `${cyFmt} - BRIDGING` : cyFmt;
         if (_curriculumModeLocked) {
+            // Still clickable: a click explains why it is locked (see _toggleCgCurrMenu).
             cgCy.innerHTML = `${_cgLabelText} <i class="fas fa-lock" style="font-size:0.8em;opacity:0.7;"></i>`;
             cgCy.classList.remove('cg-cy-clickable');
             cgCy.classList.add('cg-cy-locked');
-            cgCy.title = _curriculumViewMode === 'bridging'
-                ? 'This section is set "With Bridging" in Program Management — only its Bridging subjects are scheduled here.'
-                : 'This section uses the Regular curriculum (Program Management → Sections → "With Bridging" is off).';
+            cgCy.title = (_curriculumLockReason ||
+                'This section already has a schedule or an assigned faculty.') +
+                ' The curriculum unlocks once they are removed.';
         } else {
-            cgCy.textContent = _cgLabelText;
+            cgCy.innerHTML = `${_cgLabelText} <i class="fas fa-chevron-down" style="font-size:0.75em;opacity:0.7;"></i>`;
             cgCy.classList.add('cg-cy-clickable');
             cgCy.classList.remove('cg-cy-locked');
-            cgCy.title = '';
+            cgCy.title = 'Choose this section\'s curriculum (Regular or Bridging). It locks once the section has a schedule or an assigned faculty.';
         }
     } else {
         cgCy.textContent = cyFmt;
@@ -3402,8 +3427,14 @@ function _updateCurriculumModeSelectVisibility() {
 
 function _toggleCgCurrMenu(event) {
     event.stopPropagation();
-    if (!_curriculumHasBridgingSibling) return; // nothing to pick — plain label, not a trigger
-    if (_curriculumModeLocked) return; // locked — picker is read-only until cleared
+    if (!_cgPickerAvailable()) return; // nothing to pick — plain label, not a trigger
+    if (_curriculumModeLocked) {   // locked — say why instead of doing nothing
+        showValidationModal('Curriculum Locked',
+            (_curriculumLockReason || 'This section already has a schedule or an assigned faculty.') +
+            '\n\nTo switch between Regular and Bridging, remove this section\'s schedules (Draft and ' +
+            'Published) and its assigned faculty first.');
+        return;
+    }
     const menu = document.getElementById('cg-curr-menu');
     if (!menu) return;
     const isOpen = menu.classList.contains('open');
@@ -3414,25 +3445,96 @@ function _toggleCgCurrMenu(event) {
 // Fetches the persisted curriculum lock for a section+term (see /api/manual/curriculum_lock)
 // and applies it to _curriculumViewMode/_curriculumModeLocked. Falls back to unlocked Regular
 // on any error so a lookup failure never blocks scheduling.
+// Why the open section's curriculum is locked (server text), '' when it isn't.
+// (var, not let: the picker can be redrawn by acad2.js before this line has run.)
+var _curriculumLockReason = '';
+// Whether the open section's YEAR LEVEL has Bridging subjects (null = not known yet).
+// /api/get_curriculum's has_bridging only says the program has a Bridging curriculum.
+var _sectionHasBridging = null;
+
+// The Regular/Bridging picker is offered only when the section's year level has Bridging
+// subjects — or the section is already on Bridging, so it can always be switched back.
+function _cgPickerAvailable() {
+    return !!_curriculumHasBridgingSibling &&
+        (_sectionHasBridging !== false || _curriculumViewMode === 'bridging');
+}
+
+// The section's saved curriculum (sections.withbridging) is what the guide shows. It can be
+// changed here until the section has a Draft/Published schedule or an assigned faculty.
 async function _applyCurriculumLockForSection(sectionId, ay, sem) {
     _curriculumViewMode   = 'regular';
     _curriculumModeLocked = false;
+    _curriculumLockReason = '';
+    _sectionHasBridging   = null;
     if (!sectionId || !ay || !sem) return;
     try {
         const resp = await fetch(`/api/manual/curriculum_lock?section_id=${encodeURIComponent(sectionId)}` +
             `&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
         const data = await resp.json();
-        if (data.success && data.locked) {
+        if (data.success) {
             _curriculumViewMode   = data.curriculum_mode === 'bridging' ? 'bridging' : 'regular';
-            _curriculumModeLocked = true;
+            _curriculumModeLocked = !!data.locked;
+            _curriculumLockReason = data.lock_reason || '';
+            if (typeof data.has_bridging === 'boolean') _sectionHasBridging = data.has_bridging;
         }
     } catch(e) { /* keep the unlocked-Regular default on failure */ }
 }
 
-function _onCurriculumModeChange(mode) {
-    _curriculumViewMode = (mode === 'bridging') ? 'bridging' : 'regular';
+// Re-check only the lock (not the chosen curriculum) for the open section — after a Save,
+// Publish, delete or faculty change the section may have become locked or free again.
+async function _refreshCurriculumLockState() {
+    const sectionId = document.getElementById('sel_section')?.value || '';
+    if (!sectionId) return;
+    try {
+        const resp = await fetch(`/api/manual/curriculum_lock?section_id=${encodeURIComponent(sectionId)}`);
+        const data = await resp.json();
+        if (!data.success || (document.getElementById('sel_section')?.value || '') !== sectionId) return;
+        _curriculumModeLocked = !!data.locked;
+        _curriculumLockReason = data.lock_reason || '';
+        _updateCurriculumModeSelectVisibility();
+    } catch (e) { /* keep the current state */ }
+}
+
+async function _onCurriculumModeChange(mode) {
+    mode = (mode === 'bridging') ? 'bridging' : 'regular';
     document.getElementById('cg-curr-menu')?.classList.remove('open');
+    if (mode === _curriculumViewMode) return;
+    const sectionId = document.getElementById('sel_section')?.value || '';
+    if (!sectionId) return;
+    if (typeof hasUnsavedChanges === 'function' && hasUnsavedChanges()) {
+        const ok = await showConfirmModal(
+            'You have unsaved changes. Changing the curriculum discards them.\n\nContinue?',
+            'Change Curriculum');
+        if (!ok) return;
+    }
+    // Saved on the section, so Schedule Generation and Program Management follow it too.
+    try {
+        const resp = await fetch('/api/manual/section/curriculum_mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section_id: sectionId, mode })
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            if (data.locked) { _curriculumModeLocked = true; _curriculumLockReason = data.error || ''; }
+            _updateCurriculumModeSelectVisibility();
+            await showValidationModal(data.locked ? 'Curriculum Locked' : 'Cannot Change Curriculum',
+                data.error || 'The curriculum could not be changed.');
+            return;
+        }
+    } catch (e) {
+        await showValidationModal('Connection Error', 'Could not reach the server. The curriculum was not changed.');
+        return;
+    }
+    if (typeof pendingManualSchedule !== 'undefined') {
+        const _ay = document.getElementById('sel_ay')?.value || '', _sem = document.getElementById('sel_sem')?.value || '';
+        pendingManualSchedule = pendingManualSchedule.filter(c =>
+            !(c.ay === _ay && c.sem === _sem && String(c.section_id || '') === String(sectionId) && !c.fromExisting));
+    }
+    _curriculumViewMode = mode;
     _updateCurriculumModeSelectVisibility();
+    if (typeof showAlertPopup === 'function')
+        showAlertPopup('success', `This section now uses the ${mode === 'bridging' ? 'Bridging' : 'Regular'} curriculum.`);
     // A subject that was active under the previous mode may not exist in the new one
     // (or vice versa) — drop the open editing session rather than leave it dangling.
     if (typeof _resetRightPanel === 'function') _resetRightPanel();
@@ -3460,6 +3562,9 @@ function _expandSection(bodyId, caretId) {
 
 /* ── Subject list builder ── */
 async function _updateSubjectList() {
+    // Runs after every Save / Publish / delete — the section's curriculum may have just
+    // become locked (first schedule) or free again (all removed). Not awaited.
+    if (typeof _refreshCurriculumLockState === 'function') _refreshCurriculumLockState();
     await _refreshSubjectScheduledHours();
     const container = document.getElementById('subject-list-container');
     const subjSel   = document.getElementById('sel_subj');
@@ -3953,6 +4058,13 @@ let _subjClickToken = 0;
 
 async function _onSubjectClick(code, name, units, hours) {
     const _myClickToken = ++_subjClickToken;
+    // Right after a Publish the open subject's slices are still being reloaded as Published.
+    // Wait for that (usually already done) so the just-published slices are not mistaken
+    // for unsaved changes below.
+    if (window._postPublishPanelReady) {
+        try { await window._postPublishPanelReady; } catch (e) {}
+        if (_myClickToken !== _subjClickToken) return;
+    }
     // Prompt if there are unsaved pending slices for the current subject
     if (_currentSubjectCode && _currentSubjectCode !== code) {
         // Same "genuinely unsaved" definition hasUnsavedChanges() uses for the browser leave
@@ -6547,9 +6659,12 @@ function duplicateTimeSlot(id) {
             if (_dupSel.value === day) {
                 if (typeof _applyDayAvailabilityFilter === 'function') _applyDayAvailabilityFilter(newId);
                 else _renderDayRecommendations(newId);
-                _syncSliceToPending(newId);
             }
         }
+        // Give the copy its OWN calendar entry (preview). addNewTimeSlot never creates one,
+        // so the copy only seemed to be on the calendar because the original's pill sat at
+        // the same spot — deleting the original left the copy with no pill at all.
+        if (newRow?.querySelector('.ts-day-sel')?.value) _syncSliceToPending(newId);
         setTimeout(() => _filterConflictingStartTimes(newId, day, roomId), 50);
         // An exact copy keeps the original's day too — the user changes what they need.
         // (_applyDayAvailabilityFilter keeps the copied day while the copy is unmodified;
@@ -6567,6 +6682,30 @@ function _isDupUnmodified(id) {
     const curEnd   = row.querySelector('.ts-end-hidden')?.value   || '';
     const curRoom  = row.querySelector('.ts-room-hidden')?.value  || '';
     return curDay === oDay && curStart === oStart && curEnd === oEnd && String(curRoom) === String(oRoom);
+}
+
+/* A duplicate whose original slice is gone (deleted) is no longer a copy of anything — drop
+   its tag so it is treated as an ordinary slice (saving it is no longer blocked). */
+function _dropOrphanDupTags() {
+    const rows = Array.from(document.querySelectorAll('.ts-row'));
+    const freed = [];
+    const vals = r => [
+        r.querySelector('.ts-day-sel')?.value      || '',
+        r.querySelector('.ts-start-hidden')?.value || '',
+        r.querySelector('.ts-end-hidden')?.value   || '',
+        String(r.querySelector('.ts-room-hidden')?.value || ''),
+    ].join('|');
+    rows.forEach(r => {
+        if (!r.dataset.dupOrigin) return;
+        const hasOriginal = rows.some(o => o !== r && vals(o) === r.dataset.dupOrigin);
+        if (!hasOriginal) { delete r.dataset.dupOrigin; freed.push(r); }
+    });
+    // A copy made before the fix above may have no calendar entry of its own — (re)create
+    // it now that the original is gone, or the selected copy shows on no pill.
+    freed.forEach(r => {
+        const rid = String(r.id || '').replace('ts-row-', '');
+        if (rid && !r.dataset.existingJson) _syncSliceToPending(rid);
+    });
 }
 
 async function removeTimeSlot(id) {
@@ -6589,14 +6728,10 @@ async function removeTimeSlot(id) {
 
     const existingJson = row.dataset.existingJson || '';
 
-    // Block drop of an unmodified duplicate — removing it without any changes would
-    // accidentally clear the original slice's pending entry (same subject/day/time key).
-    if (!existingJson && _isDupUnmodified(id)) {
-        await showValidationModal('Unmodified Duplicate',
-            'This slice is an exact copy of an existing slice and has not been modified. ' +
-            'Please change the day, room, or time to make it a distinct session before removing it.');
-        return;
-    }
+    // An unmodified duplicate can always be removed: below, only ITS OWN preview entry is
+    // dropped (never entries matched by subject/day/time, which the original shares).
+    // It used to be blocked outright, so a copy made by mistake could not be deleted.
+    const _isUnmodifiedDup = !existingJson && _isDupUnmodified(id);
 
     if (existingJson) {
         let sess = {};
@@ -6722,15 +6857,20 @@ async function removeTimeSlot(id) {
         // Also remove the matching confirmed-but-unsaved entry from pendingManualSchedule.
         // These entries are added by confirmAndPlace with temp_ids like "DRAFT_..." — they
         // never get cleaned up when the UI row is removed, causing ghost blocks in the grid.
-        if (typeof pendingManualSchedule !== 'undefined') {
+        // An unmodified duplicate never got an entry of its own beyond its preview (removed
+        // below) — matching by subject/day/time would remove the ORIGINAL's entry instead.
+        if (typeof pendingManualSchedule !== 'undefined' && !_isUnmodifiedDup) {
             const day   = row.querySelector('.ts-day-sel')?.value      || '';
             const start = row.querySelector('.ts-start-hidden')?.value || '';
             const end   = row.querySelector('.ts-end-hidden')?.value   || '';
             const subj  = (typeof _currentSubjectCode !== 'undefined' ? _currentSubjectCode : '')
                           || document.getElementById('sel_subj')?.value || '';
+            // Another slice's own preview (e.g. a duplicate of this slice) shares the same
+            // subject/day/time — keep it, or that slice's pill vanishes from the calendar.
             pendingManualSchedule = pendingManualSchedule.filter(c =>
                 !(c.subject_code === subj && c.day === day &&
-                  c.start_time === start && c.end_time === end && !c.fromExisting)
+                  c.start_time === start && c.end_time === end && !c.fromExisting &&
+                  !String(c.temp_id || '').startsWith('PREVIEW_'))
             );
         }
     }
@@ -6741,6 +6881,7 @@ async function removeTimeSlot(id) {
     }
     row.remove();
     _renumberSlices();
+    _dropOrphanDupTags();
     const ay  = document.getElementById('sel_ay').value;
     const sem = document.getElementById('sel_sem').value;
     // Update progress after removal
@@ -7391,6 +7532,119 @@ function toggleBcMenu(menuId, event) {
 // another tab) shows up immediately instead of requiring a Program/Year re-select or a
 // full page reload. Only the option list is rebuilt here — current selection and the
 // right panel are left untouched (unlike _loadSectionOptions, which resets both).
+// Section dropdown options + (Official Scheduler) "+ Add Section" at the bottom.
+// Names are escaped — they are typed by users.
+function _renderSectMenu(menu, secs) {
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let html = secs.length
+        ? secs.map(s => `<div class="bc-option" data-sect-id="${esc(s.id)}" data-sect-name="${esc(s.name)}"><strong>${esc(s.name)}</strong></div>`).join('')
+        : '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">No sections found</div>';
+    if (typeof IS_LOCAL === 'undefined' || !IS_LOCAL) {
+        html += `<div class="bc-option bc-add-sect" data-add-sect="1"
+                      style="border-top:1px solid #eee;color:#800000;font-weight:700;">
+                    <i class="fas fa-plus" style="margin-right:6px;"></i>Add Section</div>`;
+    }
+    menu.innerHTML = html;
+    menu.querySelectorAll('.bc-option[data-sect-id]').forEach(el =>
+        el.addEventListener('click', () => selectBcSect(el.dataset.sectId, el.dataset.sectName)));
+    menu.querySelector('[data-add-sect]')?.addEventListener('click', e => {
+        e.stopPropagation();
+        menu.classList.remove('open');
+        _openAddSectionDialog();
+    });
+}
+
+// "+ Add Section": a new section for the selected Program + Year Level + Academic Year.
+// It starts on the Regular curriculum; if the year level has Bridging subjects, the
+// Curriculum Guide's C.Y badge switches it before any schedule or faculty is set.
+async function _openAddSectionDialog() {
+    const prog = document.getElementById('sel_prog')?.value || '';
+    const yl   = document.getElementById('sel_year')?.value || '';
+    const ay   = document.getElementById('sel_ay')?.value   || '';
+    if (!prog || !yl || !ay) {
+        showValidationModal('Select Program First', 'Select the Academic Year, Program and Year Level before adding a section.');
+        return;
+    }
+    // Adding opens the new section, which clears the current one's unsaved work.
+    if (typeof hasUnsavedChanges === 'function' && hasUnsavedChanges()) {
+        const ok = await showConfirmModal(
+            'You have unsaved changes. Adding a section opens it and discards them.\n\nContinue?',
+            'Unsaved Changes');
+        if (!ok) return;
+    }
+    const ayLbl = /^AY(\d{2})(\d{2})$/.test(ay) ? ay.replace(/^AY(\d{2})(\d{2})$/, '20$1-20$2') : ay;
+    document.getElementById('addSectDlg')?.remove();
+    const ov = document.createElement('div');
+    ov.id = 'addSectDlg';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9200;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+    ov.innerHTML = `
+      <div role="dialog" aria-modal="true" aria-labelledby="addSectTitle"
+           style="background:#fff;border-radius:12px;width:min(420px,100%);box-shadow:0 10px 36px rgba(0,0,0,.3);overflow:hidden;font-family:inherit;">
+        <div style="background:#800000;color:#fff;padding:14px 18px;">
+          <div style="font-size:.6rem;font-weight:900;letter-spacing:2px;opacity:.8;">MANUAL SCHEDULER</div>
+          <div id="addSectTitle" style="font-weight:900;letter-spacing:.6px;">ADD SECTION</div>
+        </div>
+        <form id="addSectForm" style="padding:16px 18px 18px;">
+          <div style="font-size:.78rem;color:#555;margin-bottom:12px;line-height:1.5;">
+            <strong id="addSectCtx"></strong><br>
+            The section starts on the Regular curriculum. If this year level has Bridging subjects,
+            choose Bridging in the Curriculum Guide (C.Y badge) before scheduling — it locks once
+            the section has a schedule or an assigned faculty.
+          </div>
+          <label for="addSectName" style="display:block;font-size:.68rem;font-weight:800;letter-spacing:1px;color:#800000;margin-bottom:4px;">SECTION NAME</label>
+          <input id="addSectName" type="text" maxlength="30" autocomplete="off" required
+                 style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid #ccc;border-radius:7px;font-size:.88rem;">
+          <div id="addSectErr" style="display:none;color:#b71c1c;font-size:.76rem;margin-top:8px;"></div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button type="button" id="addSectCancel"
+                    style="padding:9px 16px;border-radius:7px;border:1.5px solid #ccc;background:#fff;font-weight:700;cursor:pointer;">Cancel</button>
+            <button type="submit" id="addSectSave"
+                    style="padding:9px 16px;border-radius:7px;border:0;background:#800000;color:#fff;font-weight:800;cursor:pointer;">Add Section</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.querySelector('#addSectCtx').textContent = `${prog} · Year ${yl} · AY ${ayLbl}`;
+    const input = ov.querySelector('#addSectName');
+    const err   = ov.querySelector('#addSectErr');
+    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    ov.querySelector('#addSectCancel').onclick = close;
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    input.placeholder = `e.g. ${prog} ${yl}B`;
+    setTimeout(() => input.focus(), 0);
+    ov.querySelector('#addSectForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const name = input.value.trim();
+        if (!name) { err.textContent = 'Enter a section name.'; err.style.display = ''; return; }
+        const btn = ov.querySelector('#addSectSave');
+        btn.disabled = true; btn.textContent = 'Adding...'; err.style.display = 'none';
+        try {
+            const resp = await fetch('/api/manual/section/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ program: prog, year_level: yl, ay_id: ay, section_name: name })
+            });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error || 'The section could not be added.');
+            close();
+            // Confirm right away — opening the new section (subject list, calendar) takes a
+            // moment and used to finish before this notice appeared.
+            if (typeof showAlertPopup === 'function')
+                showAlertPopup('success', data.reactivated
+                    ? `Section '${data.section_name}' was restored.`
+                    : `Section '${data.section_name}' was added.`);
+            // Reload the list and open the new section.
+            await _loadSectionOptions(String(data.section_id), data.section_name);
+        } catch (ex) {
+            err.textContent = ex.message; err.style.display = '';
+            btn.disabled = false; btn.textContent = 'Add Section';
+        }
+    });
+}
+
 function toggleBcSectMenu(event) {
     event.stopPropagation();
     const menu = document.getElementById('bc-sect-menu');
@@ -7417,14 +7671,7 @@ async function _refreshSectMenuOptions() {
         if (sem) params.set('semester', sem);
         const res  = await fetch(`/api/sections-by-program?${params}`);
         const data = await res.json();
-        const secs = data.sections || [];
-        if (!secs.length) {
-            menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">No sections found</div>';
-        } else {
-            menu.innerHTML = secs.map(s =>
-                `<div class="bc-option" onclick="selectBcSect('${s.id}','${s.name.replace(/'/g,"\\'")}')"><strong>${s.name}</strong></div>`
-            ).join('');
-        }
+        _renderSectMenu(menu, data.sections || []);
     } catch(e) {
         // Keep whatever was already rendered rather than clobbering it with an error state —
         // this is a background refresh of an already-open list, not the initial load.
@@ -7603,13 +7850,8 @@ async function _loadSectionOptions(desiredSectionId, desiredSectionName) {
         const data = await res.json();
         if (_sectionSignal.aborted) return;
         const secs = data.sections || [];
-        if (!secs.length) {
-            menu.innerHTML = '<div class="bc-option" style="color:#bbb;cursor:default;font-style:italic;">No sections found</div>';
-        } else {
-            menu.innerHTML = secs.map(s =>
-                `<div class="bc-option" onclick="selectBcSect('${s.id}','${s.name.replace(/'/g,"\\'")}')"><strong>${s.name}</strong></div>`
-            ).join('');
-
+        _renderSectMenu(menu, secs);
+        if (secs.length) {
             // Auto-select the section a clicked calendar pill actually belongs to,
             // instead of leaving it on "-Select Section-" after a program/year switch.
             if (desiredSectionId || desiredSectionName) {

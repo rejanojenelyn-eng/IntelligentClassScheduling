@@ -64,23 +64,41 @@ function _initCurrProgSearchDropdown() {
     });
 }
 // ── Assignment table filter + sort ────────────────────────────────────────────
+// Search text matches a row by curriculum, program name/code, or section — "BSIT 1",
+// "bsit1" and "BSIT-1" all find section BSIT 1 (and BSIT's Year 1, even if its section is
+// named differently). Spaces, dashes and dots are ignored.
+function _assignSearchHit(row, raw) {
+    const norm = s => String(s || '').toLowerCase().replace(/[\s\-_.]+/g, '');
+    const q = norm(raw);
+    if (!q) return true;
+    const code = row.dataset.progcode || '';
+    const hay = [
+        row.dataset.curr, row.dataset.prog, code,
+        ...(row.dataset.sects || '').split(','),
+        code ? `${code} ${row.dataset.yl || ''}` : '',
+    ];
+    return hay.some(h => h && norm(h).includes(q));
+}
+
 function filterAssignments() {
-    const search     = (document.getElementById('searchAssign')?.value     || '').toLowerCase();
+    const search     = (document.getElementById('searchAssign')?.value     || '');
     const currFilter = (document.getElementById('filterAssignCurr')?.value || '').toLowerCase();
     const progFilter = (document.getElementById('filterAssignProg')?.value || '').toLowerCase();
-    // Academic year of entry (the summary pill). Each row is one program × year level ×
-    // entry-year group, so without this the same program repeats once per entry year.
+    const ylFilter   = (document.getElementById('filterAssignYl')?.value   || '');
+    // Academic year (the summary pill): each row is one program × year level × school year,
+    // so one school year shows every year level with the curriculum its students follow.
     const ayFilter   = (document.getElementById('filterAssignAy')?.value   || '');
     const visibleProgs = new Set();
     let visible = 0;
     document.querySelectorAll('#assignmentTable tbody tr').forEach(row => {
         const currText = (row.dataset.curr || row.cells[0]?.textContent || '').toLowerCase().trim();
         const progText = (row.dataset.prog || row.cells[1]?.textContent || '').toLowerCase().trim();
-        const matchSearch = !search     || currText.includes(search) || progText.includes(search);
+        const matchSearch = _assignSearchHit(row, search);
         const matchCurr   = !currFilter || currText === currFilter;
         const matchProg   = !progFilter || progText === progFilter;
+        const matchYl     = !ylFilter   || String(row.dataset.yl || '') === ylFilter;
         const matchAy     = !ayFilter   || (row.dataset.ay || '') === ayFilter;
-        const show = matchSearch && matchCurr && matchProg && matchAy;
+        const show = matchSearch && matchCurr && matchProg && matchYl && matchAy;
         row.style.display = show ? '' : 'none';
         if (show) { visible++; visibleProgs.add(progText); }
     });
@@ -108,7 +126,10 @@ function setAssignSort(key, asc) {
         let c = typeof va === 'number' ? va - vb : va.localeCompare(vb);
         // Ties (same curriculum / year level / section count) read best by program name.
         if (c === 0 && key !== 'prog') c = String(a.dataset.prog || '').localeCompare(String(b.dataset.prog || ''));
-        return asc ? c : -c;
+        if (!asc) c = -c;
+        // Within one program, year levels always read 1, 2, 3, 4.
+        if (c === 0) c = Number(a.dataset.yl || 0) - Number(b.dataset.yl || 0);
+        return c;
     });
     rows.forEach(r => tbody.appendChild(r));
     document.querySelectorAll('#assignmentTable th.cm-sortable').forEach(th => {

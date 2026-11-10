@@ -50,10 +50,29 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // ── Assignment table filter + sort ────────────────────────────────────────────
+// Search text matches a row by curriculum, program name/code, or section — "BSIT 1",
+// "bsit1" and "BSIT-1" all find section BSIT 1 (and BSIT's Year 1, even if its section is
+// named differently). Spaces, dashes and dots are ignored.
+function _assignSearchHit(row, raw) {
+    const norm = s => String(s || '').toLowerCase().replace(/[\s\-_.]+/g, '');
+    const q = norm(raw);
+    if (!q) return true;
+    const code = row.dataset.progcode || '';
+    const hay = [
+        row.dataset.curr, row.dataset.prog, code,
+        ...(row.dataset.sects || '').split(','),
+        code ? `${code} ${row.dataset.yl || ''}` : '',
+    ];
+    return hay.some(h => h && norm(h).includes(q));
+}
+
 function filterAssignments() {
-    const search     = (document.getElementById('searchAssign')?.value     || '').toLowerCase();
+    const search     = (document.getElementById('searchAssign')?.value     || '');
     const currFilter = (document.getElementById('filterAssignCurr')?.value || '').toLowerCase();
     const progFilter = (document.getElementById('filterAssignProg')?.value || '').toLowerCase();
+    const ylFilter   = (document.getElementById('filterAssignYl')?.value   || '');
+    // Academic year (school year the row applies to), not the cohort's entry year — one
+    // school year shows every year level with the curriculum its students follow.
     const ayFilter   = (document.getElementById('filterAssignAy')?.value   || '');
     const visibleProgs = new Set();
     let visible = 0;
@@ -61,11 +80,12 @@ function filterAssignments() {
         const currText = (row.dataset.curr || '').toLowerCase().trim();
         const progText = (row.dataset.prog || '').toLowerCase().trim();
         const progCode = (row.dataset.progcode || '').toLowerCase().trim();
-        const matchSearch = !search     || currText.includes(search) || progText.includes(search);
+        const matchSearch = _assignSearchHit(row, search);
         const matchCurr   = !currFilter || currText === currFilter;
         const matchProg   = !progFilter || progCode === progFilter;
+        const matchYl     = !ylFilter   || String(row.dataset.yl || '') === ylFilter;
         const matchAy     = !ayFilter   || (row.dataset.ay || '') === ayFilter;
-        const show = matchSearch && matchCurr && matchProg && matchAy;
+        const show = matchSearch && matchCurr && matchProg && matchYl && matchAy;
         row.style.display = show ? '' : 'none';
         if (show) { visible++; visibleProgs.add(progCode || progText); }
     });

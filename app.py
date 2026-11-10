@@ -7022,28 +7022,37 @@ def curriculum():
     except Exception:
         pass
 
+    # One row per program × year level × ACADEMIC YEAR (pyl.academicyearid), so the page can
+    # show a school year's whole picture: in AY 2026-2027, Year 1 follows the curriculum of
+    # the 2026 intake, Year 2 that of the 2025 intake, and so on (startacademicyear = entry).
     cohorts_raw = query_db("""
         SELECT pyl.programyearlevelid AS cohortid,
                pyl.programcode,
                p.programname,
                pyl.curriculumid,
                curr.curriculumcode,
+               pyl.academicyearid   AS school_ay,
                pyl.startacademicyear,
                pyl.yearlevel AS year_level,
-               GREATEST(COUNT(sec.sectionid), 1) AS numberofsections
+               GREATEST(COUNT(sec.sectionid), 1) AS numberofsections,
+               COALESCE(STRING_AGG(DISTINCT sec.sectionname, ', '), '') AS section_names
         FROM program_yearlevel pyl
         JOIN programs p ON pyl.programcode = p.programcode
         LEFT JOIN curriculum curr ON pyl.curriculumid = curr.curriculumid
         LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid AND sec.isactive = TRUE
         WHERE pyl.isactive = TRUE
         GROUP BY pyl.programyearlevelid, pyl.programcode, p.programname,
-                 pyl.curriculumid, curr.curriculumcode, pyl.startacademicyear, pyl.yearlevel
-        ORDER BY pyl.startacademicyear DESC, p.programname ASC
+                 pyl.curriculumid, curr.curriculumcode, pyl.academicyearid,
+                 pyl.startacademicyear, pyl.yearlevel
+        ORDER BY pyl.academicyearid DESC, p.programname ASC, pyl.yearlevel ASC
     """)
 
     cohorts = [{k.lower(): v for k, v in row.items()} for row in cohorts_raw] if cohorts_raw else []
+    _active_ay_row = query_db("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1", one=True)
+    active_ay = (_active_ay_row or {}).get('academicyearid') or ''
 
-    return render_template('academic/curriculum.html', programs=programs, curriculums=curriculums, selected_program=selected_program, cohorts=cohorts)
+    return render_template('academic/curriculum.html', programs=programs, curriculums=curriculums,
+                           selected_program=selected_program, cohorts=cohorts, active_ay=active_ay)
 
 @app.route('/curriculum/view/<int:curriculum_id>')
 @roles_required(ROLE_ACAD_HEAD)
@@ -22740,25 +22749,189 @@ def api_manual_delete_assignment(subjectcode):
         return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
+def _section_curriculum_lock_reason(cur, section_id):
+    """Why a section's curriculum (Regular vs Bridging) can no longer change — '' when it
+    can. Locked while the section has any Draft/Published schedule or an assigned faculty
+    (any semester); removing all of them unlocks it again. Shared by the Manual Editor's
+    picker and Program Management's "With Bridging" switch."""
+    cur.execute("""
+        SELECT COUNT(DISTINCT sc.scheduleid) AS n FROM schedule sc
+        JOIN schedule_version sv ON sv.scheduleid = sc.scheduleid
+        WHERE sc.sectionid = %s AND sv.status IN ('Draft', 'Published')
+    """, (int(section_id),))
+    r = cur.fetchone()
+    n_sched = int((r['n'] if isinstance(r, dict) else r[0]) or 0)
+    _ensure_faculty_assignment_table(cur)
+    cur.execute("SELECT COUNT(*) AS n FROM public.subject_faculty_assignment WHERE sectionid = %s",
+                (int(section_id),))
+    r = cur.fetchone()
+    n_fac = int((r['n'] if isinstance(r, dict) else r[0]) or 0)
+    parts = []
+    if n_sched:
+        parts.append(f'{n_sched} subject schedule{"s" if n_sched != 1 else ""} (Draft or Published)')
+    if n_fac:
+        parts.append(f'{n_fac} assigned facult{"ies" if n_fac != 1 else "y"}')
+    if not parts:
+        return ''
+    return ('This section already has ' + ' and '.join(parts) + '. Remove them first to change '
+            'its curriculum.')
+
+
+def _section_bridging_available(cur, section_id):
+    """(program, year_level, ay_id, has_bridging) for a section."""
+    cur.execute("""
+        SELECT pyl.programcode, pyl.yearlevel, pyl.academicyearid
+        FROM sections s JOIN program_yearlevel pyl ON pyl.programyearlevelid = s.programyearlevelid
+        WHERE s.sectionid = %s
+    """, (int(section_id),))
+    r = cur.fetchone()
+    if not r:
+        return None
+    prog, yl, ay = (r['programcode'], r['yearlevel'], r['academicyearid']) if isinstance(r, dict) else r
+    has = int(yl) in _bridging_year_levels(cur, ay, prog).get(str(prog).upper(), set())
+    return prog, int(yl), ay, has
+
+
 @app.route('/api/manual/curriculum_lock')
 @roles_required(*STAFF_ROLES)
 def api_manual_curriculum_lock():
-    """A section's curriculum (Regular vs Bridging) for the Manual Editor and Schedule
-    Generation. It comes from the section itself — Program Management → "With Bridging"
-    (sections.withbridging) — so it is always fixed ('locked') once a section is picked;
-    source='section' tells the client why."""
+    """A section's curriculum (Regular vs Bridging) for the Manual Editor. The choice is
+    stored on the section (sections.withbridging — also Program Management's "With
+    Bridging") and can be changed in the Curriculum Guide until the section has a
+    Draft/Published schedule or an assigned faculty; then it is locked (lock_reason says
+    why) until those are removed."""
     section_id = request.args.get('section_id', '').strip()
     if not section_id:
         return jsonify({'success': True, 'locked': False})
     try:
         conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         _mode = _section_curriculum_mode(cur, section_id)
-        cur.close(); conn.close()
         if not _mode:
+            cur.close(); conn.close()
             return jsonify({'success': True, 'locked': False})
-        return jsonify({'success': True, 'locked': True, 'curriculum_mode': _mode, 'source': 'section'})
+        reason = _section_curriculum_lock_reason(cur, section_id)
+        info = _section_bridging_available(cur, section_id)
+        conn.commit(); cur.close(); conn.close()
+        return jsonify({'success': True, 'locked': bool(reason), 'lock_reason': reason,
+                        'curriculum_mode': _mode, 'has_bridging': bool(info and info[3]),
+                        'source': 'section'})
     except Exception as e:
         return jsonify({'success': False, 'locked': False, 'error': _public_error(e)})
+
+
+@app.route('/api/manual/section/curriculum_mode', methods=['POST'])
+@roles_required(*STAFF_ROLES)
+def api_manual_set_section_curriculum():
+    """Curriculum Guide → choose Regular or Bridging for the open section. Saved on the
+    section (sections.withbridging), so Schedule Generation and Program Management follow
+    it. Refused once the section has a schedule or an assigned faculty."""
+    data = request.get_json(silent=True) or {}
+    section_id = str(data.get('section_id') or '').strip()
+    mode = str(data.get('mode') or '').strip().lower()
+    if not section_id.isdigit() or mode not in ('regular', 'bridging'):
+        return jsonify({'success': False, 'error': 'Missing section or curriculum.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        info = _section_bridging_available(cur, section_id)
+        if not info:
+            return jsonify({'success': False, 'error': 'Section not found.'}), 404
+        prog, yl, _ay, has_bridging = info
+        current = _section_curriculum_mode(cur, section_id)
+        if current == mode:
+            return jsonify({'success': True, 'curriculum_mode': mode, 'changed': False})
+        reason = _section_curriculum_lock_reason(cur, section_id)
+        if reason:
+            return jsonify({'success': False, 'locked': True, 'error': reason}), 409
+        if mode == 'bridging' and not has_bridging:
+            return jsonify({'success': False, 'error':
+                f"{prog} Year {yl} has no Bridging subjects, so this section can't use the Bridging curriculum."}), 400
+        cur.execute("UPDATE sections SET withbridging = %s WHERE sectionid = %s RETURNING sectionname",
+                    (mode == 'bridging', int(section_id)))
+        sname = (cur.fetchone() or {}).get('sectionname') or section_id
+        # Nothing backs an older per-term lock row any more (checked above) — drop it so it
+        # can't disagree with the section's new curriculum.
+        _ensure_curriculum_lock_table(cur)
+        cur.execute("DELETE FROM public.section_curriculum_lock WHERE sectionid = %s", (int(section_id),))
+        conn.commit()
+        write_activity_log('Changed Section Curriculum',
+                           f"Section '{sname}' ({prog} Year {yl}) now uses the "
+                           f"{'Bridging' if mode == 'bridging' else 'Regular'} curriculum",
+                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+        return jsonify({'success': True, 'curriculum_mode': mode, 'changed': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+_SECTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()\-]{0,29}$")
+
+
+@app.route('/api/manual/section/add', methods=['POST'])
+@roles_required(*STAFF_ROLES)
+def api_manual_add_section():
+    """Manual Editor → Section → "+ Add Section": a new section for the selected program,
+    year level and academic year (Regular curriculum; switch it to Bridging in the
+    Curriculum Guide before scheduling, if that year level has Bridging subjects)."""
+    data = request.get_json(silent=True) or {}
+    program = str(data.get('program') or '').strip().upper()
+    ay_id   = str(data.get('ay_id') or '').strip()
+    name    = re.sub(r'\s+', ' ', str(data.get('section_name') or '')).strip()
+    try:
+        year_level = int(data.get('year_level') or 0)
+    except (TypeError, ValueError):
+        year_level = 0
+    if not program or not ay_id or year_level < 1:
+        return jsonify({'success': False, 'error': 'Select the Program, Year Level and Academic Year first.'}), 400
+    if not _SECTION_NAME_RE.match(name):
+        return jsonify({'success': False, 'error':
+            'Section name must be 1–30 characters: letters, numbers, spaces, and - . _ ( ) only.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT programyearlevelid FROM program_yearlevel
+            WHERE UPPER(programcode) = %s AND yearlevel = %s AND academicyearid = %s AND isactive = TRUE
+            ORDER BY startacademicyear DESC NULLS LAST LIMIT 1
+        """, (program, year_level, ay_id))
+        pyl = cur.fetchone()
+        if not pyl:
+            return jsonify({'success': False, 'error':
+                f'{program} Year {year_level} is not active for this academic year.'}), 400
+        pyl_id = pyl['programyearlevelid']
+        # Same name (any letter case, ignoring spaces) in this program + year level + AY.
+        cur.execute("""
+            SELECT sectionid, sectionname, isactive FROM sections
+            WHERE programyearlevelid = %s
+              AND LOWER(REPLACE(sectionname, ' ', '')) = LOWER(REPLACE(%s, ' ', ''))
+            LIMIT 1
+        """, (pyl_id, name))
+        dup = cur.fetchone()
+        if dup and dup['isactive']:
+            return jsonify({'success': False, 'error':
+                f"Section '{dup['sectionname']}' already exists for {program} Year {year_level}."}), 409
+        if dup:   # an inactive section of that name: bring it back instead of a near-duplicate
+            cur.execute("UPDATE sections SET isactive = TRUE WHERE sectionid = %s RETURNING sectionid, sectionname",
+                        (dup['sectionid'],))
+        else:
+            cur.execute("""
+                INSERT INTO sections (programyearlevelid, sectionname, isactive, withbridging)
+                VALUES (%s, %s, TRUE, FALSE)
+                RETURNING sectionid, sectionname
+            """, (pyl_id, name))
+        row = cur.fetchone()
+        conn.commit()
+        write_activity_log('Added Section',
+                           f"Added section '{row['sectionname']}' (Year {year_level}) to program {program} "
+                           f"for {ay_id} from the Manual Editor",
+                           category='program', color=_LOG_COLORS.get('program', 'blue'))
+        return jsonify({'success': True, 'section_id': row['sectionid'], 'section_name': row['sectionname'],
+                        'reactivated': bool(dup)})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
 
 @app.route('/api/manual/existing_days')
@@ -26049,23 +26222,27 @@ def admin_curriculum():
                pyl.programcode      AS offeringcode,
                p.programname,
                pyl.programcode,
-               pyl.startacademicyear AS academicyearid,
+               pyl.startacademicyear AS academicyearid,   -- Year Entry (cohort's intake year)
+               pyl.academicyearid    AS school_ay,        -- the school year this row applies to
                pyl.yearlevel,
                pyl.curriculumid,
                c.curriculumcode,
                pyl.isactive,
-               GREATEST(COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE), 1) AS section_count
+               GREATEST(COUNT(DISTINCT sec.sectionid) FILTER (WHERE sec.isactive = TRUE), 1) AS section_count,
+               COALESCE(STRING_AGG(DISTINCT sec.sectionname, ', ') FILTER (WHERE sec.isactive = TRUE), '') AS section_names
         FROM program_yearlevel pyl
         JOIN programs   p ON p.programcode  = pyl.programcode
         LEFT JOIN curriculum c ON c.curriculumid = pyl.curriculumid
         LEFT JOIN sections sec ON sec.programyearlevelid = pyl.programyearlevelid
         WHERE pyl.isactive = TRUE
         GROUP BY pyl.programyearlevelid, pyl.programcode, p.programname,
-                 pyl.startacademicyear, pyl.yearlevel, pyl.curriculumid,
+                 pyl.startacademicyear, pyl.academicyearid, pyl.yearlevel, pyl.curriculumid,
                  c.curriculumcode, pyl.isactive
-        ORDER BY p.programname, pyl.startacademicyear DESC, pyl.yearlevel
+        ORDER BY p.programname, pyl.academicyearid DESC, pyl.yearlevel
     """)
     cohorts = [{k.lower(): v for k, v in row.items()} for row in pylrows_raw] if pylrows_raw else []
+    _active_ay_row = query_db("SELECT academicyearid FROM academicyear WHERE isactive = TRUE LIMIT 1", one=True)
+    active_ay = (_active_ay_row or {}).get('academicyearid') or ''
 
     import_offerings = query_db("""
         SELECT p.programcode, p.programcode AS offeringcode, p.programname,
@@ -26080,7 +26257,7 @@ def admin_curriculum():
     return render_template('admin/curriculum_admin.html', programs=programs, curriculums=curriculums,
                            selected_program=selected_program, cohorts=cohorts,
                            unique_codes=unique_codes, all_curriculums=all_curriculums,
-                           import_offerings=import_offerings)
+                           import_offerings=import_offerings, active_ay=active_ay)
 
 @app.route('/admin/export/assignments')
 def export_assignments():
@@ -27238,8 +27415,32 @@ def admin_view_curriculum(curriculum_id):
 
 @app.route('/admin/schedule')
 def admin_schedule():
+    """Full Schedule List — the dashboard's 'Schedule List' card without its 6-row cap
+    (dashboard 'View Full List'). Read-only: one row per program × year level × term."""
     if session.get('role') != 'Admin': return redirect(url_for('login'))
-    return render_template('admin/schedule_admin.html')
+    rows = query_db("""
+        SELECT
+            pyl.programcode,
+            p.programname,
+            pyl.yearlevel,
+            ay.yearstart || '-' || ay.yearend AS acad_year,
+            sem.semestertype,
+            COUNT(DISTINCT sec.sectionid) AS section_count,
+            TO_CHAR(MAX(sv.datecreated), 'MM/DD/YYYY') AS date_imported,
+            MAX(sv.datecreated) AS _sort_ts
+        FROM schedule_version sv
+        JOIN schedule s ON sv.scheduleid = s.scheduleid
+        JOIN sections sec ON s.sectionid = sec.sectionid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        LEFT JOIN programs p ON p.programcode = pyl.programcode
+        JOIN semester sem ON s.semesterid = sem.semesterid
+        JOIN academicyear ay ON sem.academicyearid = ay.academicyearid
+        WHERE pyl.isactive IS DISTINCT FROM FALSE
+        GROUP BY pyl.programcode, p.programname, pyl.yearlevel, ay.yearstart, ay.yearend, sem.semestertype
+        ORDER BY MAX(sv.datecreated) DESC
+    """) or []
+    schedules = [dict(r) for r in rows]
+    return render_template('admin/schedule_admin.html', schedules=schedules)
 
 @app.route('/admin/schedule/sis')
 def admin_class_schedule_sis():
@@ -27991,6 +28192,80 @@ def _check_ay_dependencies(cur, ay_id):
     return len(dependencies) > 0, dependencies, total_count
 
 
+# ── Activity Logs (Settings → Activity Logs) ─────────────────────────────────
+# Every user's log entries — Admin, Academic Head, Faculty and System — filtered on the
+# server, so a filter searches ALL entries, not just the newest page the browser holds.
+# initiated_by is the account's username (Employee ID) or a 'System…' label.
+_ACTIVITY_LOG_ROLE_SQL = """
+    CASE WHEN a.role IS NOT NULL THEN a.role
+         WHEN al.initiated_by ILIKE 'System%%' THEN 'System'
+         ELSE 'Unknown' END
+"""
+
+
+def _activity_log_rows(args, limit=None, offset=0):
+    """(rows, total) of activity_log entries matching args: q (search text), cat
+    (category), role, user (initiated_by), order ('asc' | 'desc')."""
+    where, params = [], []
+    q = (args.get('q') or '').strip()
+    if q:
+        like = f"%{q}%"
+        where.append("(al.action ILIKE %s OR al.details ILIKE %s OR al.initiated_by ILIKE %s"
+                     " OR TRIM(COALESCE(f.firstname,'') || ' ' || COALESCE(f.lastname,'')) ILIKE %s)")
+        params += [like, like, like, like]
+    cat = (args.get('cat') or '').strip().lower()
+    if cat:
+        where.append("LOWER(al.category) = %s"); params.append(cat)
+    user = (args.get('user') or '').strip()
+    if user:
+        where.append("LOWER(al.initiated_by) = LOWER(%s)"); params.append(user)
+    role = (args.get('role') or '').strip()
+    if role:
+        where.append(f"({_ACTIVITY_LOG_ROLE_SQL}) = %s"); params.append(role)
+    order = 'ASC' if (args.get('order') or '').lower() == 'asc' else 'DESC'
+    base = f"""
+        FROM activity_log al
+        LEFT JOIN accounts a ON LOWER(a.username) = LOWER(al.initiated_by)
+        LEFT JOIN faculty  f ON f.employeenumber = a.employeenumber
+        {('WHERE ' + ' AND '.join(where)) if where else ''}
+    """
+    total_row = query_db(f"SELECT COUNT(*) AS n {base}", params, one=True)
+    total = int((total_row or {}).get('n') or 0)
+    page = f" LIMIT {int(limit)} OFFSET {int(offset)}" if limit else ''
+    rows = query_db(f"""
+        SELECT al.logid, TO_CHAR(al.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,
+               al.action, al.details, al.initiated_by, al.category, al.log_color,
+               {_ACTIVITY_LOG_ROLE_SQL} AS role,
+               NULLIF(TRIM(COALESCE(f.firstname,'') || ' ' || COALESCE(f.lastname,'')), '') AS user_name
+        {base}
+        ORDER BY al.logtime {order}, al.logid {order}{page}
+    """, params) or []
+    return [dict(r) for r in rows], total
+
+
+@app.route('/admin/settings/activity_logs')
+def admin_activity_logs_api():
+    """JSON page of activity logs for the Settings table (filters + Load more) and the
+    PDF export (all=1 returns every matching entry, capped for safety)."""
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    _ensure_activity_log_table()
+    if request.args.get('all') == '1':
+        limit, offset = 20000, 0
+    else:
+        try:
+            limit  = max(1, min(int(request.args.get('limit', 100)), 500))
+            offset = max(0, int(request.args.get('offset', 0)))
+        except ValueError:
+            limit, offset = 100, 0
+    try:
+        rows, total = _activity_log_rows(request.args, limit=limit, offset=offset)
+    except Exception as e:
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    return jsonify({'success': True, 'rows': rows, 'total': total,
+                    'offset': offset, 'has_more': offset + len(rows) < total})
+
+
 @app.route('/admin/settings')
 def admin_settings():
     if session.get('role') != 'Admin': return redirect(url_for('login'))
@@ -28125,18 +28400,27 @@ def admin_settings():
         unlinked_employees = to_dict(cur)
 
         # ── Activity Logs ────────────────────────────────────
+        # First page only; the table loads more / filters through /admin/settings/activity_logs
+        # (every user's entries — Admin, Academic Head, Faculty, System).
         _ensure_activity_log_table()
         try:
-            cur.execute("""
-                SELECT logid, TO_CHAR(logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,
-                       action, details, initiated_by, category, log_color
-                FROM   activity_log
-                ORDER  BY logtime DESC
-                LIMIT  200
-            """)
-            activity_logs = to_dict(cur)
+            activity_logs, activity_log_total = _activity_log_rows({}, limit=100)
+            activity_log_users = [dict(r) for r in (query_db(f"""
+                SELECT al.initiated_by, MAX({_ACTIVITY_LOG_ROLE_SQL}) AS role,
+                       MAX(NULLIF(TRIM(COALESCE(f.firstname,'') || ' ' || COALESCE(f.lastname,'')), '')) AS user_name
+                FROM activity_log al
+                LEFT JOIN accounts a ON LOWER(a.username) = LOWER(al.initiated_by)
+                LEFT JOIN faculty  f ON f.employeenumber = a.employeenumber
+                WHERE al.initiated_by IS NOT NULL AND al.initiated_by <> ''
+                GROUP BY al.initiated_by
+                ORDER BY 2, 1
+            """, []) or [])]
+            activity_log_categories = [r['category'] for r in (query_db(
+                "SELECT DISTINCT LOWER(category) AS category FROM activity_log "
+                "WHERE category IS NOT NULL AND category <> '' ORDER BY 1") or [])]
         except Exception:
-            activity_logs = []
+            activity_logs, activity_log_total = [], 0
+            activity_log_users, activity_log_categories = [], []
 
         # ── Current AY display labels ────────────────────────
         _SEM_LABEL_MAP = {'A': '1ST SEMESTER', 'B': '2ND SEMESTER', 'C': 'SUMMER'}
@@ -28175,6 +28459,9 @@ def admin_settings():
                                sched_cfg=sched_cfg,
                                accounts=accounts, unlinked_employees=unlinked_employees,
                                activity_logs=activity_logs,
+                               activity_log_total=activity_log_total,
+                               activity_log_users=activity_log_users,
+                               activity_log_categories=activity_log_categories,
                                current_ay_label=current_ay_label,
                                current_sem_label=current_sem_label,
                                max_existing_year_end=max_existing_year_end)
@@ -29826,16 +30113,14 @@ def settings_edit_section():
             old_wb, s_prog, s_yl, s_ay = bool(cur_row[0]), cur_row[1], cur_row[2], cur_row[3]
             new_wb = old_wb if _wb_raw is None else (_wb_raw == '1')
             if new_wb != old_wb:
-                # Its schedules were built for the other curriculum — switching now would
-                # leave Regular subjects in a Bridging section (or vice versa).
-                cur.execute("""
-                    SELECT 1 FROM schedule sc JOIN schedule_version sv ON sv.scheduleid = sc.scheduleid
-                    WHERE sc.sectionid = %s AND sv.status IN ('Draft', 'Published') LIMIT 1
-                """, (section_id,))
-                if cur.fetchone():
+                # Its schedules / faculty were set up for the other curriculum — switching now
+                # would leave Regular subjects in a Bridging section (or vice versa). Same lock
+                # as the Manual Editor's Curriculum Guide picker.
+                _lock = _section_curriculum_lock_reason(cur, section_id)
+                if _lock:
                     return jsonify({'success': False, 'error':
-                        'This section already has Draft or Published schedules. Remove them first to '
-                        f'turn With Bridging {"on" if new_wb else "off"}.'})
+                        f'{_lock[:-len("Remove them first to change its curriculum.")]}'
+                        f'Remove them first to turn With Bridging {"on" if new_wb else "off"}.'})
                 if new_wb and int(s_yl) not in _bridging_year_levels(cur, s_ay, s_prog).get(str(s_prog).upper(), set()):
                     return jsonify({'success': False, 'error':
                         f"{s_prog} Year {s_yl} has no Bridging subjects, so the section can't be With Bridging."})

@@ -92,7 +92,7 @@ HARD_CONSTRAINTS = {
     "HC4": _hc(
         "HC4", "Designee Extra Teaching Load",
         "Per time segment (never the whole class): weekday 4:30-6:00 PM is the "
-        "designee PT/TS window and 6:00-9:00 PM the Night Teaching Service window; "
+        "designee PT/TS window and 6:00-9:00 PM the night teaching window; "
         "only a segment outside every designee window is rejected, naming that "
         "segment. Available PT/TS hours are HC9's check; how many night days, HC8's.",
         ("instructor", "day", "time"),
@@ -143,9 +143,9 @@ HARD_CONSTRAINTS = {
     ),
     "HC8": _hc(
         "HC8", "Designee PT Teaching-Night Limit",
-        "DESIGNEE_NIGHT_TEACHING_DAY_LIMIT. A designee's designation 'PT/Night "
-        "Teaching Service' value is the maximum number of DISTINCT days per week "
-        "they may teach inside the 6:00-9:00 PM Night Teaching Service window. "
+        "DESIGNEE_NIGHT_TEACHING_DAY_LIMIT. A designee's designation 'Allowed Night "
+        "Teaching in Weekdays' value is the maximum number of DISTINCT weekdays "
+        "(Monday-Friday) per week they may teach inside the 6:00-9:00 PM night window. "
         "0 means the night window is not available. Multiple classes on the "
         "same day count as one night; a subject meeting on two days uses two. "
         "4:30-6:00 PM and AM PT never count as a night.",

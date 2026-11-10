@@ -1607,66 +1607,176 @@ function addTimeSlot() {
 }
 
 /* ── Activity Logs ──────────────────────────────────────── */
+// Every user's entries (Admin, Academic Head, Faculty, System). Search, filters and sort
+// run on the server (/admin/settings/activity_logs), so they cover ALL log entries — not
+// just the first page the browser holds. "Load more" fetches the next page.
 let _logSortDir = 'desc';
+let _logLoaded  = document.querySelectorAll('#logsTableBody tr.log-row').length;
+let _logReqSeq  = 0;
+let _logSearchTimer = null;
+const _LOG_PAGE = 100;
+
+function _logFilters() {
+  return {
+    q:     (document.getElementById('logSearch')?.value || '').trim(),
+    cat:   document.getElementById('logFilterCat')?.value  || '',
+    role:  document.getElementById('logFilterRole')?.value || '',
+    user:  document.getElementById('logFilterUser')?.value || '',
+    order: _logSortDir,
+  };
+}
+
+function _logEsc(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function _logClass(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9_-]/g, ''); }
+
+function _logRowHtml(l) {
+  const cat = String(l.category || '');
+  const sub = [l.user_name, l.role].filter(Boolean).join(' · ');
+  return `<tr class="log-row">
+    <td class="log-ts" style="text-align:left; padding-left:18px;">${_logEsc(l.logtime)}</td>
+    <td style="text-align:left;"><span class="log-dot log-dot-${_logClass(l.log_color)}"></span>
+      <strong class="log-action">${_logEsc(l.action)}</strong></td>
+    <td class="log-detail" style="text-align:left;">${_logEsc(l.details || '—')}</td>
+    <td class="log-user"><strong>${_logEsc(l.initiated_by || '—')}</strong>
+      <div class="log-user-sub" style="font-size:.68rem;color:#888;line-height:1.3;">${_logEsc(sub)}</div></td>
+    <td><span class="log-cat-badge log-cat-${_logClass(cat)}">${_logEsc(cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase())}</span></td>
+  </tr>`;
+}
+
+async function _fetchLogs(params) {
+  const qs = new URLSearchParams(params);
+  const res = await fetch('/admin/settings/activity_logs?' + qs.toString(), { credentials: 'same-origin' });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function _logUpdateMeta(total) {
+  const shown = document.getElementById('logsShown');
+  const tot   = document.getElementById('logsTotal');
+  if (shown) shown.textContent = _logLoaded;
+  if (tot)   tot.textContent   = total;
+  const more = document.getElementById('logsLoadMore');
+  if (more) more.style.display = _logLoaded < total ? '' : 'none';
+  const empty = document.getElementById('logsEmpty');
+  const wrap  = document.getElementById('logs-table-wrap');
+  if (empty) empty.style.display = _logLoaded ? 'none' : '';
+  if (wrap)  wrap.style.display  = _logLoaded ? '' : 'none';
+  const et = document.getElementById('logsEmptyText');
+  const f = _logFilters();
+  if (et) et.textContent = (f.q || f.cat || f.role || f.user)
+    ? 'No log entries match the current filters.'
+    : 'No activity logs yet. Logs will appear here after actions are performed.';
+}
+
+// Reload the table from the first page with the current filters / sort.
+async function _reloadLogs() {
+  const seq = ++_logReqSeq;
+  try {
+    const data = await _fetchLogs({ ..._logFilters(), limit: _LOG_PAGE, offset: 0 });
+    if (seq !== _logReqSeq) return;            // a newer filter change took over
+    const tbody = document.getElementById('logsTableBody');
+    if (tbody) tbody.innerHTML = data.rows.map(_logRowHtml).join('');
+    _logLoaded = data.rows.length;
+    _logUpdateMeta(data.total);
+  } catch (e) {
+    if (seq === _logReqSeq) showAlertPopup('error', 'Could not load activity logs: ' + e.message);
+  }
+}
+
+async function loadMoreLogs() {
+  const btn = document.getElementById('logsLoadMore');
+  if (btn) btn.disabled = true;
+  const seq = _logReqSeq;
+  try {
+    const data = await _fetchLogs({ ..._logFilters(), limit: _LOG_PAGE, offset: _logLoaded });
+    if (seq !== _logReqSeq) return;
+    document.getElementById('logsTableBody')?.insertAdjacentHTML('beforeend', data.rows.map(_logRowHtml).join(''));
+    _logLoaded += data.rows.length;
+    _logUpdateMeta(data.total);
+  } catch (e) {
+    showAlertPopup('error', 'Could not load more logs: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 function setLogSort(dir) {
-  _logSortDir = dir;
-  document.getElementById('logSortDesc')?.classList.toggle('active', dir === 'desc');
-  document.getElementById('logSortAsc')?.classList.toggle('active', dir === 'asc');
-
-  const tbody = document.getElementById('logsTableBody');
-  if (!tbody) return;
-  const rows = Array.from(tbody.querySelectorAll('tr.log-row'));
-  rows.sort((a, b) => {
-    const ta = a.querySelector('.log-ts')?.textContent.trim() || '';
-    const tb = b.querySelector('.log-ts')?.textContent.trim() || '';
-    return dir === 'desc' ? tb.localeCompare(ta) : ta.localeCompare(tb);
-  });
-  rows.forEach(r => tbody.appendChild(r));
+  _logSortDir = dir === 'asc' ? 'asc' : 'desc';
+  document.getElementById('logSortDesc')?.classList.toggle('active', _logSortDir === 'desc');
+  document.getElementById('logSortAsc')?.classList.toggle('active', _logSortDir === 'asc');
+  _reloadLogs();
 }
 
 function filterLogs() {
-  const q    = (document.getElementById('logSearch')?.value  || '').toLowerCase();
-  const cat  = (document.getElementById('logFilterCat')?.value || '').toLowerCase();
-  const user = (document.getElementById('logFilterUser')?.value || '').toLowerCase();
-
-  document.querySelectorAll('#logsTableBody tr.log-row').forEach(row => {
-    const text    = row.dataset.text  || '';
-    const rowCat  = row.dataset.cat   || '';
-    const rowUser = row.dataset.user  || '';
-
-    const matchQ    = !q    || text.includes(q);
-    const matchCat  = !cat  || rowCat  === cat;
-    const matchUser = !user || rowUser === user;
-
-    row.classList.toggle('hidden', !(matchQ && matchCat && matchUser));
-  });
+  // Typing in the search box waits briefly so every keystroke isn't a request.
+  clearTimeout(_logSearchTimer);
+  _logSearchTimer = setTimeout(_reloadLogs, 300);
 }
 
-function exportLogs() {
-  /* Build CSV from visible rows */
-  const rows = Array.from(document.querySelectorAll('#logsTableBody tr.log-row:not(.hidden)'));
-  if (rows.length === 0) { alert('No log entries to export.'); return; }
+// PDF of EVERY log entry matching the current filters (not only the rows loaded so far).
+async function exportLogs() {
+  const btn = document.getElementById('logExportBtn');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing PDF...'; }
+  try {
+    if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('PDF library did not load. Check the internet connection and try again.');
+    const f = _logFilters();
+    const data = await _fetchLogs({ ...f, all: 1 });
+    if (!data.rows.length) { showAlertPopup('error', 'No log entries to export.'); return; }
 
-  const headers = ['Timestamp','Action','Details','Initiated By','Category'];
-  const lines   = [headers.join(',')];
-  rows.forEach(row => {
-    const cells = row.querySelectorAll('td');
-    const ts     = cells[0]?.textContent.trim() || '';
-    const action = row.querySelector('.log-action')?.textContent.trim() || '';
-    const detail = cells[2]?.textContent.trim().replace(/,/g, ';') || '';
-    const user   = cells[3]?.textContent.trim() || '';
-    const cat    = cells[4]?.textContent.trim() || '';
-    lines.push([`"${ts}"`, `"${action}"`, `"${detail}"`, `"${user}"`, `"${cat}"`].join(','));
-  });
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const W = doc.internal.pageSize.getWidth();
+    const now = new Date();
+    const userSel = document.getElementById('logFilterUser');
+    const scope = [
+      f.q    ? `Search: "${f.q}"` : '',
+      f.cat  ? `Category: ${f.cat.charAt(0).toUpperCase() + f.cat.slice(1)}` : '',
+      f.role ? `Role: ${f.role}` : '',
+      f.user ? `User: ${userSel?.options[userSel.selectedIndex]?.text || f.user}` : '',
+    ].filter(Boolean).join('   |   ') || 'All users, all categories';
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `activity_logs_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(128, 0, 0);
+    doc.text('PUPLC Scheduling System - Activity Logs', 10, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(60, 60, 60);
+    doc.text(`Generated: ${now.toLocaleString()}   |   ${data.rows.length} entr${data.rows.length === 1 ? 'y' : 'ies'}   |   ` +
+             `${f.order === 'asc' ? 'Oldest first' : 'Most recent first'}`, 10, 20);
+    doc.text(doc.splitTextToSize(`Filters: ${scope}`, W - 20), 10, 25);
+
+    // jsPDF's built-in font has no em dash / middle dot; keep the PDF text plain.
+    const plain = t => String(t == null ? '' : t).replace(/[—–]/g, '-').replace(/·/g, '|');
+    doc.autoTable({
+      startY: 30,
+      head: [['Timestamp', 'Action / Transaction', 'Log Content / Details', 'Initiated By', 'Role', 'Category']],
+      body: data.rows.map(l => [
+        l.logtime || '', plain(l.action), plain(l.details || '-'),
+        plain(l.initiated_by || '-') + (l.user_name ? `\n${plain(l.user_name)}` : ''),
+        l.role || '', (l.category || '').replace(/^./, c => c.toUpperCase()),
+      ]),
+      theme: 'grid',
+      styles: { fontSize: 7.5, cellPadding: 1.8, overflow: 'linebreak', valign: 'top' },
+      headStyles: { fillColor: [128, 0, 0], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [250, 245, 245] },
+      columnStyles: { 0: { cellWidth: 32 }, 1: { cellWidth: 40 }, 2: { cellWidth: 'auto' },
+                      3: { cellWidth: 34 }, 4: { cellWidth: 26 }, 5: { cellWidth: 22 } },
+      margin: { left: 10, right: 10 },
+    });
+    const pages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+      doc.text(`Page ${i} of ${pages}`, W - 10, doc.internal.pageSize.getHeight() - 5, { align: 'right' });
+    }
+    const pad = n => String(n).padStart(2, '0');
+    doc.save(`activity_logs_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.pdf`);
+  } catch (e) {
+    showAlertPopup('error', 'Export failed: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label; }
+  }
 }
 
 /* ════════════════════════════════════════════════════════
@@ -2456,8 +2566,14 @@ function _showToast(type, msg) { showAlertPopup(type, msg); }
 
 /* ── Init ───────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
-  const savedTab = localStorage.getItem('settings_active_tab');
-  if (savedTab && document.getElementById('tab-' + savedTab)) _activateTab(savedTab);
+  // A link asking for a specific tab (?tab=logs — the dashboard's "View Logs") wins over
+  // the tab remembered from the last visit; otherwise reopen the remembered tab.
+  let urlTab = '';
+  try { urlTab = new URLSearchParams(window.location.search).get('tab') || ''; } catch (_) {}
+  let savedTab = '';
+  try { savedTab = localStorage.getItem('settings_active_tab') || ''; } catch (_) {}
+  const startTab = (urlTab && document.getElementById('tab-' + urlTab)) ? urlTab : savedTab;
+  if (startTab && document.getElementById('tab-' + startTab)) _activateTab(startTab);
 
   markTableActionsLocked();
   await initHCToggles();

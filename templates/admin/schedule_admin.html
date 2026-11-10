@@ -1,18 +1,119 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard_admin.css') }}">
+<style>
+    /* Full Schedule List (dashboard "View Full List"). Table look comes from dashboard_admin.css. */
+    .sl-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+    .sl-head h1 { margin:0; color:#800000; font-weight:900; letter-spacing:.5px; }
+    .sl-head p  { margin:4px 0 0; color:#6c757d; font-size:.85rem; }
+    .sl-open { display:inline-flex; align-items:center; gap:8px; padding:10px 16px; border-radius:8px;
+               background:#800000; color:#fff; font-weight:700; font-size:.8rem; text-decoration:none; }
+    .sl-open:hover { background:#600000; }
+    .sl-bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+    .sl-search { flex:1 1 260px; display:flex; align-items:center; gap:8px; padding:9px 12px;
+                 border:1px solid #e0e0e0; border-radius:8px; background:#fff; }
+    .sl-search input { border:0; outline:0; flex:1; font-size:.85rem; background:transparent; }
+    .sl-search i { color:#999; }
+    .sl-bar select { padding:9px 10px; border:1px solid #e0e0e0; border-radius:8px; background:#fff;
+                     font-size:.82rem; min-width:150px; }
+    .sl-count { margin-left:auto; font-size:.8rem; color:#555; white-space:nowrap; }
+    .sl-empty { text-align:center; color:#6c757d; padding:25px; }
+    @media (max-width: 700px) { .sl-count { margin-left:0; } .sl-bar select { flex:1 1 140px; } }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="schedule-container">
-    <div class="schedule-header"><h1>SCHEDULE MANAGEMENT</h1></div>
+<div class="dashboard-wrapper">
+    <div class="sl-head">
+        <div>
+            <h1>SCHEDULE LIST</h1>
+            <p>Every program and year level with a schedule, per academic year and semester (latest first).</p>
+        </div>
+        <a href="{{ url_for('admin_class_schedule_sis') }}" class="sl-open">
+            <i class="fas fa-calendar-alt"></i> OPEN CLASS SCHEDULE (SIS)
+        </a>
+    </div>
 
-    <!-- WALANG TABS DAHIL ADMIN AY VIEW ONLY -->
-    <div class="placeholder-box" style="margin-top: 30px;">
-        <i class="fas fa-eye"></i>
-        <h2>Admin View: Schedules</h2>
-        <p>This section will display the list of finalized schedules created by the Academic Head.</p>
+    {% set _ays = schedules|map(attribute='acad_year')|reject('none')|unique|sort|list %}
+    {% set _yls = schedules|map(attribute='yearlevel')|reject('none')|unique|sort|list %}
+    <div class="sl-bar">
+        <label class="sl-search">
+            <i class="fas fa-magnifying-glass"></i>
+            <input type="text" id="slSearch" placeholder="Search program (e.g. BSIT)..." oninput="slFilter()">
+        </label>
+        <select id="slAy" onchange="slFilter()" aria-label="Academic year">
+            <option value="">All Academic Years</option>
+            {% for ay in _ays|reverse %}<option value="{{ ay }}">{{ ay }}</option>{% endfor %}
+        </select>
+        <select id="slSem" onchange="slFilter()" aria-label="Semester">
+            <option value="">All Semesters</option>
+            <option value="A">1st Semester</option>
+            <option value="B">2nd Semester</option>
+            <option value="S">Summer</option>
+        </select>
+        <select id="slYl" onchange="slFilter()" aria-label="Year level">
+            <option value="">All Year Levels</option>
+            {% for yl in _yls %}<option value="{{ yl }}">Year {{ yl }}</option>{% endfor %}
+        </select>
+        <span class="sl-count"><strong id="slShown">{{ schedules|length }}</strong> of {{ schedules|length }} schedules</span>
+    </div>
+
+    <div class="table-card">
+        <div class="table-container" style="border:none;">
+            <table class="table-full sched-table" id="slTable">
+                <thead>
+                    <tr>
+                        <th>PROGRAM</th>
+                        <th>YEAR LEVEL</th>
+                        <th>ACAD YEAR</th>
+                        <th>SEMESTER</th>
+                        <th>SECTIONS</th>
+                        <th>DATE IMPORTED</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sched in schedules %}
+                    {% set _st = sched.semestertype if sched.semestertype in ['A', 'B'] else 'S' %}
+                    <tr data-prog="{{ (sched.programcode or '') ~ ' ' ~ (sched.programname or '') }}"
+                        data-ay="{{ sched.acad_year or '' }}" data-sem="{{ _st }}" data-yl="{{ sched.yearlevel or '' }}">
+                        <td class="prog-bold" title="{{ sched.programname or '' }}">{{ sched.programcode or '—' }}</td>
+                        <td>{% if sched.yearlevel %}{{ sched.yearlevel }}{% if sched.yearlevel == 1 %}st{% elif sched.yearlevel == 2 %}nd{% elif sched.yearlevel == 3 %}rd{% else %}th{% endif %} Year{% else %}—{% endif %}</td>
+                        <td style="font-weight:600; color:#800000;">{{ sched.acad_year }}</td>
+                        <td>{{ '1ST SEMESTER' if _st == 'A' else '2ND SEMESTER' if _st == 'B' else 'SUMMER' }}</td>
+                        <td>{{ sched.section_count }}</td>
+                        <td><span class="date-pill">{{ sched.date_imported }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div id="slEmpty" class="sl-empty" {% if schedules %}style="display:none;"{% endif %}>
+                {% if schedules %}No schedules match the current filters.{% else %}No imported schedules found.{% endif %}
+            </div>
+        </div>
     </div>
 </div>
+
+<script>
+function slFilter() {
+    const norm = s => String(s || '').toLowerCase().replace(/[\s\-_.]+/g, '');
+    const q   = norm(document.getElementById('slSearch').value);
+    const ay  = document.getElementById('slAy').value;
+    const sem = document.getElementById('slSem').value;
+    const yl  = document.getElementById('slYl').value;
+    let shown = 0;
+    document.querySelectorAll('#slTable tbody tr').forEach(tr => {
+        const ok = (!q   || norm(tr.dataset.prog).includes(q) ||
+                            norm((tr.dataset.prog || '').split(' ')[0] + tr.dataset.yl).includes(q)) &&
+                   (!ay  || tr.dataset.ay  === ay) &&
+                   (!sem || tr.dataset.sem === sem) &&
+                   (!yl  || tr.dataset.yl  === yl);
+        tr.style.display = ok ? '' : 'none';
+        if (ok) shown++;
+    });
+    document.getElementById('slShown').textContent = shown;
+    const total = document.querySelectorAll('#slTable tbody tr').length;
+    document.getElementById('slEmpty').style.display = (total && !shown) ? '' : 'none';
+}
+</script>
 {% endblock %}

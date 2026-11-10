@@ -199,7 +199,7 @@ def test_hc8_move_adding_a_night_over_the_allowance_is_rejected(monkeypatch, cfg
     desig = _fac(designation=3, nights=1)
     (ok, err), _ = _service(monkeypatch, desig, [_s(day='Tuesday', start=5, end=6)],
                             existing=[_night('Monday')])
-    assert not ok and 'allowed up to 1' in err
+    assert not ok and 'night teaching on up to 1 weekday' in err
 
 
 def test_hc8_move_within_allowance_and_same_night_is_allowed(monkeypatch, cfg):

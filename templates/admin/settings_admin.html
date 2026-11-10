@@ -250,7 +250,7 @@
             <tr>
               <th style="text-align:left; padding-left:20px;">DESIGNATION</th>
               <th>REGULAR LOAD (HRS)</th>
-              <th title="Maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window">PT/NIGHT TEACHING<br>(MAX DAYS/WEEK)</th>
+              <th title="Number of weekdays (Monday–Friday) per week the designee may teach during 6:00 PM–9:00 PM. Several classes on the same evening count as one day; 0 = no night teaching.">ALLOWED NIGHT TEACHING<br>IN WEEKDAYS</th>
               <th>REGULAR HOURS</th>
               <th class="col-action"></th>
             </tr>
@@ -595,8 +595,9 @@
           <button class="logs-sort-btn" id="logSortAsc" onclick="setLogSort('asc')">
             Oldest first <i class="fas fa-sort-amount-up"></i>
           </button>
-          <button class="btn-outline" onclick="exportLogs()">
-            <i class="fas fa-upload"></i> Export
+          <button class="btn-outline" id="logExportBtn" onclick="exportLogs()"
+                  title="Download every log entry matching the current filters as a PDF">
+            <i class="fas fa-file-pdf"></i> Export PDF
           </button>
         </div>
       </div>
@@ -607,35 +608,36 @@
                placeholder="Search by user, action, or log content…" oninput="filterLogs()">
         <select class="log-filter" id="logFilterCat" onchange="filterLogs()">
           <option value="">All Categories</option>
-          <option value="calendar">Calendar</option>
-          <option value="settings">Settings</option>
-          <option value="employee">Employee</option>
-          <option value="approval">Approval</option>
-          <option value="schedule">Schedule</option>
-          <option value="program">Program</option>
-          <option value="curriculum">Curriculum</option>
-          <option value="system">System</option>
+          {% set _base_cats = ['calendar', 'settings', 'employee', 'approval', 'schedule', 'program', 'curriculum', 'account', 'system'] %}
+          {% for c in (_base_cats + (activity_log_categories or []))|unique %}
+          <option value="{{ c }}">{{ c | title }}</option>
+          {% endfor %}
+        </select>
+        <select class="log-filter" id="logFilterRole" onchange="filterLogs()">
+          <option value="">All Roles</option>
+          <option value="Admin">Admin</option>
+          <option value="Academic Head">Academic Head</option>
+          <option value="Faculty">Faculty</option>
+          <option value="System">System</option>
         </select>
         <select class="log-filter" id="logFilterUser" onchange="filterLogs()">
           <option value="">All Users</option>
-          {% set users_seen = [] %}
-          {% for log in activity_logs %}
-            {% if log.initiated_by and log.initiated_by not in users_seen %}
-              {% set _ = users_seen.append(log.initiated_by) %}
-              <option value="{{ log.initiated_by }}">{{ log.initiated_by }}</option>
-            {% endif %}
-          {% endfor %}
-          {% for acc in accounts %}
-            {% if acc.username not in users_seen %}
-              <option value="{{ acc.username }}">{{ acc.username }}</option>
-            {% endif %}
+          {% for u in activity_log_users %}
+          <option value="{{ u.initiated_by }}">{{ u.initiated_by }}{% if u.user_name %} — {{ u.user_name }}{% endif %} ({{ u.role }})</option>
           {% endfor %}
         </select>
       </div>
+      <div class="logs-count" id="logsCount" style="font-size:.78rem;color:#666;margin:-4px 0 10px;">
+        Showing <strong id="logsShown">{{ activity_logs|length }}</strong> of
+        <strong id="logsTotal">{{ activity_log_total or 0 }}</strong> log entries (all users)
+      </div>
 
       <!-- Logs table -->
-      {% if activity_logs %}
-      <div class="table-wrapper" id="logs-table-wrap">
+      <div class="logs-empty" id="logsEmpty" {% if activity_logs %}style="display:none;"{% endif %}>
+        <i class="fas fa-history"></i>
+        <p id="logsEmptyText">No activity logs yet. Logs will appear here after actions are performed.</p>
+      </div>
+      <div class="table-wrapper" id="logs-table-wrap" {% if not activity_logs %}style="display:none;"{% endif %}>
         <table class="data-table logs-table" id="logsTable">
           <thead>
             <tr>
@@ -648,17 +650,16 @@
           </thead>
           <tbody id="logsTableBody">
             {% for log in activity_logs %}
-            <tr class="log-row"
-                data-cat="{{ log.category | lower }}"
-                data-user="{{ log.initiated_by | lower }}"
-                data-text="{{ ((log.action or '') + ' ' + (log.details or '')) | lower }}">
+            <tr class="log-row">
               <td class="log-ts" style="text-align:left; padding-left:18px;">{{ log.logtime }}</td>
               <td style="text-align:left;">
                 <span class="log-dot log-dot-{{ log.log_color }}"></span>
                 <strong class="log-action">{{ log.action }}</strong>
               </td>
               <td class="log-detail" style="text-align:left;">{{ log.details or '—' }}</td>
-              <td class="log-user"><strong>{{ log.initiated_by or '—' }}</strong></td>
+              <td class="log-user"><strong>{{ log.initiated_by or '—' }}</strong>
+                <div class="log-user-sub" style="font-size:.68rem;color:#888;line-height:1.3;">{{ log.user_name or '' }}{% if log.user_name %} · {% endif %}{{ log.role }}</div>
+              </td>
               <td>
                 <span class="log-cat-badge log-cat-{{ log.category | lower }}">{{ log.category | title }}</span>
               </td>
@@ -667,12 +668,12 @@
           </tbody>
         </table>
       </div>
-      {% else %}
-      <div class="logs-empty">
-        <i class="fas fa-history"></i>
-        <p>No activity logs yet. Logs will appear here after settings actions are performed.</p>
+      <div style="text-align:center;margin:14px 0 4px;">
+        <button type="button" class="btn-outline" id="logsLoadMore" onclick="loadMoreLogs()"
+                {% if (activity_logs|length) >= (activity_log_total or 0) %}style="display:none;"{% endif %}>
+          <i class="fas fa-chevron-down"></i> Load more
+        </button>
       </div>
-      {% endif %}
 
     </div>
   </div><!-- /tab-logs -->
@@ -1128,7 +1129,7 @@
                    onchange="updateDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT TEACHING SERVICE (MAX DAYS/WEEK)</label>
+            <label>ALLOWED NIGHT TEACHING IN WEEKDAYS</label>
             <input type="number" name="night_teaching" id="modal_des_night" class="m-input" min="0" required
                    onchange="updateDesigHours()">
           </div>
@@ -1145,7 +1146,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours slot is computed automatically. PT/Night Teaching Service is the maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
+        <p class="m-note">* Regular hours slot is computed automatically. Allowed Night Teaching in Weekdays is the number of weekdays (Monday–Friday) per week the designee may teach during 6:00 PM–9:00 PM. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1181,7 +1182,7 @@
                    onchange="updateAddDesigHours()">
           </div>
           <div class="mf">
-            <label>PT / NIGHT TEACHING SERVICE (MAX DAYS/WEEK)</label>
+            <label>ALLOWED NIGHT TEACHING IN WEEKDAYS</label>
             <input type="number" name="night_teaching" id="add_des_night" class="m-input" min="0" required
                    onchange="updateAddDesigHours()">
           </div>
@@ -1194,7 +1195,7 @@
           </div>
         </div>
 
-        <p class="m-note">* Regular hours band is computed from the PT/Night Teaching Service value. PT/Night Teaching Service is the maximum number of days per week the designee may teach during the 6:00 PM–9:00 PM Night Teaching Service window. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
+        <p class="m-note">* Regular hours band is computed from the Allowed Night Teaching in Weekdays value. Allowed Night Teaching in Weekdays is the number of weekdays (Monday–Friday) per week the designee may teach during 6:00 PM–9:00 PM. Several classes on the same evening count as one day; 4:30 PM–6:00 PM does not count. 0 = no night teaching.</p>
 
       </div>
       <div class="m-divider" style="margin:0 26px;"></div>
@@ -1206,5 +1207,8 @@
   </div>
 </div>
 
+<!-- Activity Logs → Export PDF (same jsPDF versions the Curriculum export uses) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="{{ url_for('static', filename='js/ADMIN/settings.admin.js') }}"></script>
 {% endblock %}
