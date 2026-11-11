@@ -793,6 +793,28 @@ async function rhubSelect(type, id, el) {
     if (req.status === 'Pending') rhubValidate(type, id, req);     // async constraint check
 }
 
+// A request's attachment (the students' consent letter) as a small file chip:
+// clicking the name opens it in a popup (attachment_viewer.js); ⬇ downloads it.
+function _rhubAttachChip(a) {
+    const id   = Number(a.attachmentid);
+    const pdf  = a.mime_type === 'application/pdf';
+    const size = Math.max(1, Math.round((a.file_size || 0) / 1024));
+    const sizeTxt = size >= 1024 ? (size / 1024).toFixed(1) + ' MB' : size + ' KB';
+    const nm = _rhubEsc(a.filename), mt = _rhubEsc(a.mime_type);
+    return `
+    <span style="display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 8px 6px 10px;
+                 border:1px solid #e3d6d6;border-radius:8px;background:#fdf9f9;font-size:.78rem;">
+        <i class="fas ${pdf ? 'fa-file-pdf' : 'fa-file-image'}" style="color:#800000;"></i>
+        <button type="button" onclick="openAttachmentViewer(${id}, this.dataset.name, this.dataset.mime)"
+                data-name="${nm}" data-mime="${mt}" title="View ${nm}"
+                style="border:0;background:none;padding:0;cursor:pointer;color:#333;font-weight:600;font-size:.78rem;
+                       max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;">${nm}</button>
+        <span style="color:#999;font-size:.7rem;white-space:nowrap;">${sizeTxt}</span>
+        <a href="/api/requests/attachment/${id}?download=1" title="Download"
+           style="color:#800000;padding:0 2px;"><i class="fas fa-download"></i></a>
+    </span>`;
+}
+
 function _rhubEsc(t) {
     return String(t == null ? '' : t).replace(/[&<>"']/g,
         c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1110,6 +1132,15 @@ function rhubRenderDetail(req, v) {
             <div style="font-size:.8rem;color:#333;margin-top:5px;line-height:1.5">${_rhubEsc(req.notes)}</div>
         </div>` : ''}
 
+        <div style="margin-bottom:14px;">
+            <div class="rhub-dbox-lbl">ATTACHMENT</div>
+            ${(req.attachments && req.attachments.length) ? `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">
+                ${req.attachments.map(a => _rhubAttachChip(a)).join('')}
+            </div>` : `
+            <div style="font-size:.76rem;color:#999;margin-top:4px;">None (submitted before attachments were required).</div>`}
+        </div>
+
         <div class="rhub-analytics">
             <div class="rhub-analytics-lbl">ANALYTICS</div>
             ${analyticsHtml}
@@ -1374,4 +1405,5 @@ document.getElementById('rejectConfirmModal').addEventListener('click', function
 /* Init */
 document.addEventListener('DOMContentLoaded', rhubLoad);
 </script>
+<script src="{{ url_for('static', filename='js/attachment_viewer.js') }}"></script>
 {% endblock %}

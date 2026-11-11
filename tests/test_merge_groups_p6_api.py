@@ -16,7 +16,7 @@ from psycopg2.extras import RealDictCursor
 
 import app as app_module
 import merge_groups as mg
-from conftest import requires_db
+from conftest import requires_db, with_consent_letter
 from test_merge_groups_p2_api import head, tx  # noqa: F401 (fixtures)
 
 pytestmark = requires_db
@@ -295,7 +295,7 @@ def _adj_payload(o, **kw):
 def test_adjustment_request_for_a_merged_occurrence_is_rejected_at_submission(faculty, tx, scope):
     before = _counts(tx)
     r = faculty.post('/api/faculty/submit_request',
-                     json=_adj_payload(scope['o'], day='Saturday' if scope['o']['daydesc'] != 'Saturday' else 'Friday'))
+                     **with_consent_letter(_adj_payload(scope['o'], day='Saturday' if scope['o']['daydesc'] != 'Saturday' else 'Friday')))
     ok, body = _locked(r)
     assert ok, body
     assert 'P6 merged class' in body['error'] and _counts(tx) == before
@@ -348,7 +348,7 @@ def test_editing_a_pending_adjustment_cannot_revive_it(faculty, tx, scope):
 
 def test_adjustment_of_a_non_merged_occurrence_is_not_restricted(faculty, tx, scope):
     n = scope['n']
-    r = faculty.post('/api/faculty/submit_request', json=_adj_payload(n, room_id=scope['other_room']))
+    r = faculty.post('/api/faculty/submit_request', **with_consent_letter(_adj_payload(n, room_id=scope['other_room'])))
     assert (r.get_json() or {}).get('code') != mg.MERGED_OCCURRENCE_LOCKED, r.get_json()
 
 
@@ -357,10 +357,10 @@ def test_adjustment_of_a_non_merged_occurrence_is_not_restricted(faculty, tx, sc
 def test_make_up_for_a_merged_class_is_not_merge_restricted(faculty, tx, scope):
     o = scope['o']
     d = date.today() + timedelta(days=21)
-    r = faculty.post('/api/faculty/submit_request', json={
+    r = faculty.post('/api/faculty/submit_request', **with_consent_letter({
         'request_type': 'makeup', 'subject_code': o['subjectcode'], 'section_id': o['sectionid'],
         'request_date': d.isoformat(), 'start_time': '07:30 AM', 'end_time': '08:00 AM',
-        'room_id': scope['other_room'], 'reason': 'p6 make-up'})
+        'room_id': scope['other_room'], 'reason': 'p6 make-up'}))
     body = r.get_json() or {}
     assert body.get('code') != mg.MERGED_OCCURRENCE_LOCKED, body
 
@@ -372,7 +372,7 @@ def test_legacy_model_applies_no_merge_restriction(head, faculty, tx, scope):
     tx.handle().commit()
     r = _save(head, scope, _sess(scope['o'], roomid=scope['other_room']))
     assert (r.get_json() or {}).get('code') != mg.MERGED_OCCURRENCE_LOCKED
-    r = faculty.post('/api/faculty/submit_request', json=_adj_payload(scope['o'], room_id=scope['other_room']))
+    r = faculty.post('/api/faculty/submit_request', **with_consent_letter(_adj_payload(scope['o'], room_id=scope['other_room'])))
     assert (r.get_json() or {}).get('code') != mg.MERGED_OCCURRENCE_LOCKED
     rep = head.get('/api/local/merge_divergence').get_json()
     assert rep == {'success': True, 'model': 'legacy', 'arrangements': []}

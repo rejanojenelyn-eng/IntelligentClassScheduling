@@ -12,7 +12,7 @@ import pytest
 from psycopg2.extras import RealDictCursor
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, with_consent_letter
 
 pytestmark = requires_db
 
@@ -106,9 +106,9 @@ def _resplit(c):
 
 def _submit(c, meetings, reason='multi-meeting test'):
     fac = _client('Faculty', c['username'], c['employeenumber'])
-    return fac.post('/api/faculty/submit_request', json={
+    return fac.post('/api/faculty/submit_request', **with_consent_letter({
         'request_type': 'adjustment', 'subject_code': c['subjectcode'], 'section_id': c['sectionid'],
-        'reason': reason, 'meetings': meetings}).get_json()
+        'reason': reason, 'meetings': meetings})).get_json()
 
 
 def _rows(tx, reason='multi-meeting test'):

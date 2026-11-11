@@ -105,3 +105,16 @@ def signed_in_client(role='Academic Head'):
         sess.update(loggedin=True, role=role, username=acc['username'], userid=acc['userid'],
                     must_change_password=False, account_setup_complete=True)
     return client
+
+
+# Faculty requests (/api/faculty/submit_request) require the students' signed consent
+# letter: the fields go as JSON in `payload`, with the file as `attachment`. Use as
+#   client.post('/api/faculty/submit_request', **with_consent_letter({...}))
+_CONSENT_PDF = b'%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'
+
+
+def with_consent_letter(payload, filename='consent_letter.pdf', content=_CONSENT_PDF):
+    import io as _io
+    import json as _json
+    return {'data': {'payload': _json.dumps(payload), 'attachment': (_io.BytesIO(content), filename)},
+            'content_type': 'multipart/form-data'}

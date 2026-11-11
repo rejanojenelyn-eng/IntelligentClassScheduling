@@ -10,7 +10,7 @@ import pytest
 from psycopg2.extras import RealDictCursor
 
 import app as app_module
-from conftest import requires_db
+from conftest import requires_db, with_consent_letter
 
 TIMES = ['07:30 AM', '08:00 AM', '08:30 AM', '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM',
          '11:30 AM', '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM',
@@ -89,7 +89,7 @@ def _mu(cls, **over):
 
 
 def _submit(cls, **over):
-    return _client(cls['username'], 'Faculty').post('/api/faculty/submit_request', json=_mu(cls, **over))
+    return _client(cls['username'], 'Faculty').post('/api/faculty/submit_request', **with_consent_letter(_mu(cls, **over)))
 
 
 def _msg(r):
@@ -311,12 +311,12 @@ def test_adjustment_into_an_occupied_room_is_refused_and_not_kept(tx, cls):
         pytest.skip('no other class to collide with')
     cur.execute("SELECT COUNT(*) AS n FROM schedule_change_request WHERE submitted_by = %s", [cls['employeenumber']])
     before = cur.fetchone()['n']
-    r = _client(cls['username'], 'Faculty').post('/api/faculty/submit_request', json={
+    r = _client(cls['username'], 'Faculty').post('/api/faculty/submit_request', **with_consent_letter({
         'request_type': 'adjustment', 'subject_code': cls['subjectcode'], 'section_id': cls['sectionid'],
         'reason': 'Room change', 'meetings': [{
             'official_sessionid': mine['sessionid'], 'day': occ['daydesc'],
             'start_time': TIMES[occ['starttimeid'] - 1], 'end_time': TIMES[occ['starttimeid'] - 1 + length],
-            'room_id': occ['roomid']}]})
+            'room_id': occ['roomid']}]}))
     assert r.status_code == 409 and r.get_json()['conflicts'], _msg(r)
     cur.execute("SELECT COUNT(*) AS n FROM schedule_change_request WHERE submitted_by = %s", [cls['employeenumber']])
     assert cur.fetchone()['n'] == before

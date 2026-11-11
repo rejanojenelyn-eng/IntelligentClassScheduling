@@ -1106,6 +1106,34 @@ function rfOpenView(req) {
     }
     if (req.reason) html += field('far fa-file-lines', 'REASON', req.reason);
     if (req.notes)  html += field('far fa-note-sticky', 'ADDITIONAL NOTES', req.notes);
+    // Attachment (the students' consent letter): a small file chip; the name opens it in a
+    // popup (attachment_viewer.js), the ⬇ icon downloads it.
+    if (Array.isArray(req.attachments) && req.attachments.length) {
+        const chips = req.attachments.map(a => {
+            const id = Number(a.attachmentid), pdf = a.mime_type === 'application/pdf';
+            const kb = Math.max(1, Math.round((a.file_size || 0) / 1024));
+            const nm = _rfEsc(a.filename), mt = _rfEsc(a.mime_type);
+            return `
+            <span style="display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 8px 6px 10px;
+                         border:1px solid #e3d6d6;border-radius:8px;background:#fdf9f9;font-size:.78rem;margin:2px 6px 2px 0;">
+                <i class="fas ${pdf ? 'fa-file-pdf' : 'fa-file-image'}" style="color:#800000;"></i>
+                <button type="button" onclick="openAttachmentViewer(${id}, this.dataset.name, this.dataset.mime)"
+                        data-name="${nm}" data-mime="${mt}" title="View ${nm}"
+                        style="border:0;background:none;padding:0;cursor:pointer;color:#333;font-weight:600;font-size:.78rem;
+                               max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;">${nm}</button>
+                <span style="color:#999;font-size:.7rem;white-space:nowrap;">${kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB'}</span>
+                <a href="/api/requests/attachment/${id}?download=1" title="Download" style="color:#800000;padding:0 2px;"><i class="fas fa-download"></i></a>
+            </span>`;
+        }).join('');
+        html += `
+            <div class="rv-field">
+                <span class="rv-ico"><i class="fas fa-paperclip"></i></span>
+                <div class="rv-field-main">
+                    <div class="rv-label">ATTACHMENT</div>
+                    <div class="rv-value">${chips}</div>
+                </div>
+            </div>`;
+    }
     html += field('far fa-calendar-check', 'DATE SUBMITTED', _rfWithDay(req.date_submitted));
 
     if (canAgain) {
@@ -1160,4 +1188,5 @@ function showToast(msg, type='info', duration=4000) {
 </script>
 
 <div id="rf-toast-container" style="position:fixed;top:112px;right:28px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none;"></div>
+<script src="{{ url_for('static', filename='js/attachment_viewer.js') }}"></script>
 {% endblock %}

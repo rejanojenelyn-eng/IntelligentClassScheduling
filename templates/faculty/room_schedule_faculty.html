@@ -629,6 +629,23 @@
     .mu3-field-full { grid-column: 1 / -1; }   /* long "CODE — subject name" values */
     .mu3-field > label { display: block; font-size: .76rem; font-weight: 700; color: #444; margin-bottom: 5px; }
     .mu3-field > label b { color: #c0392b; }
+    /* Students' consent letter (required attachment) */
+    .req-attach-lbl-ico { color: #800000; margin-right: 2px; }
+    .req-attach { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+    .req-attach input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    .req-attach-btn { display: inline-flex !important; align-items: center; gap: 7px; margin: 0 !important;
+                      padding: 8px 16px; border: 1.5px solid #800000; border-radius: 7px; background: #fff;
+                      color: #800000 !important; font-size: .78rem !important; font-weight: 700 !important;
+                      cursor: pointer; white-space: nowrap; transition: background .15s, color .15s; }
+    .req-attach-btn:hover { background: #800000; color: #fff !important; }
+    .req-attach input[type=file]:focus-visible + .req-attach-btn { outline: 2px solid #800000; outline-offset: 2px; }
+    .req-attach-file { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: .8rem;
+                       color: #1b5e20; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .req-attach-file::before { content: '\f058'; font-family: 'Font Awesome 6 Free', 'Font Awesome 5 Free'; font-weight: 900; color: #2e7d32; }
+    .req-attach.is-error .req-attach-btn { border-color: #c0392b; color: #c0392b !important; background: #fff4f4; }
+    .req-attach-clear { border: 0; background: transparent; color: #666; cursor: pointer; padding: 2px 4px; font-size: .9rem; }
+    .req-attach-clear:hover { color: #c0392b; }
+    .req-attach-hint { font-size: .72rem; color: #888; margin-top: 6px; line-height: 1.4; }
     .mu3-opt { font-weight: 500; color: #999; font-size: .7rem; }
     .mu3-ctl { position: relative; display: flex; align-items: center; min-width: 0; flex: 1; }
     .mu3-ctl > i { position: absolute; left: 11px; color: #8b1a1a; font-size: .82rem; pointer-events: none; z-index: 1; }
@@ -1729,6 +1746,17 @@
                     <div class="mu-count" id="muReasonCount">0/500</div>
                 </div>
                 <div class="mu3-field">
+                    <label for="muAttach"><i class="fas fa-paperclip req-attach-lbl-ico"></i> Attachment <b>*</b></label>
+                    <div class="req-attach" id="muAttachBox">
+                        <input type="file" id="muAttach" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                               onchange="_reqAttachChanged('mu')" aria-describedby="muAttachHint">
+                        <label class="req-attach-btn" for="muAttach" id="muAttachBtn"><i class="fas fa-upload"></i> <span>Upload file</span></label>
+                        <span class="req-attach-file" id="muAttachText" hidden></span>
+                        <button type="button" class="req-attach-clear" id="muAttachClear" onclick="_reqAttachClear('mu', event)" aria-label="Remove attachment" hidden><i class="fas fa-xmark"></i></button>
+                    </div>
+                    <div class="req-attach-hint" id="muAttachHint">Signed letter showing your students agreed to this request. PDF, JPG or PNG, up to 4 MB.</div>
+                </div>
+                <div class="mu3-field">
                     <label for="muNote">Additional notes <span class="mu3-opt">(optional)</span></label>
                     <textarea id="muNote" class="mu3-area" maxlength="500" oninput="muCount(this)" placeholder="e.g. Students have been notified via group chat. Attendance will be recorded and reflected in the grading sheet."></textarea>
                     <div class="mu-count" id="muNoteCount">0/500</div>
@@ -1872,6 +1900,17 @@
                         placeholder="e.g. Requesting a schedule change from Monday to Wednesday due to a conflict with another faculty-designated duty or university event." autocomplete="off"></textarea></div>
                 <div class="adj-foot"><span></span>
                     <span class="mu-count" id="adjReasonCount">0/500</span></div>
+            </div>
+            <div class="mu-field">
+                <label class="mu-label" for="adjAttach"><i class="fas fa-paperclip"></i> Attachment <b>*</b></label>
+                <div class="req-attach" id="adjAttachBox">
+                    <input type="file" id="adjAttach" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                           onchange="_reqAttachChanged('adj')" aria-describedby="adjAttachHint">
+                    <label class="req-attach-btn" for="adjAttach" id="adjAttachBtn"><i class="fas fa-upload"></i> <span>Upload file</span></label>
+                    <span class="req-attach-file" id="adjAttachText" hidden></span>
+                    <button type="button" class="req-attach-clear" id="adjAttachClear" onclick="_reqAttachClear('adj', event)" aria-label="Remove attachment" hidden><i class="fas fa-xmark"></i></button>
+                </div>
+                <div class="req-attach-hint" id="adjAttachHint">Signed letter showing your students agreed to this request. PDF, JPG or PNG, up to 4 MB.</div>
             </div>
         </div>
         <div class="req-form-msg" id="adjFormMsg" role="alert" style="display:none"></div>
@@ -3528,8 +3567,64 @@ function _resetReqForm(p) {
     if (p === 'adj') _adjBlockedSlots = [];
     else           { _muBlockedSlots  = []; _muRenderTimeNotice(); }
 
+    _reqAttachClear(p);
 
     _hideConflictBanner(p);
+}
+
+/* ── Students' consent letter (required attachment) ── */
+const _REQ_ATTACH_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
+const _REQ_ATTACH_MAX = 4 * 1024 * 1024;   // same limit as the server
+
+// The chosen file, or an error message for an unusable one ({ file } | { error }).
+function _reqAttachCheck(p) {
+    const f = document.getElementById(p + 'Attach')?.files?.[0];
+    if (!f) return { error: "Please attach the students' consent letter (PDF, JPG or PNG)." };
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    if (!_REQ_ATTACH_EXT.includes(ext)) return { error: 'The consent letter must be a PDF, JPG or PNG file.' };
+    if (!f.size) return { error: 'The attached file is empty. Please choose the file again.' };
+    if (f.size > _REQ_ATTACH_MAX) return { error: 'The consent letter is too large. The maximum is 4 MB.' };
+    return { file: f };
+}
+
+function _reqAttachChanged(p) {
+    const box  = document.getElementById(p + 'AttachBox');
+    const text = document.getElementById(p + 'AttachText');
+    const clr  = document.getElementById(p + 'AttachClear');
+    const input = document.getElementById(p + 'Attach');
+    if (!input?.files?.length) { _reqAttachClear(p); return; }
+    const chk = _reqAttachCheck(p);
+    if (chk.error) {
+        _reqAttachClear(p);
+        box?.classList.add('is-error');
+        _reqFormMsg(p, chk.error);
+        return;
+    }
+    const kb = chk.file.size / 1024;
+    if (text) {
+        text.textContent = `${chk.file.name} (${kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(kb)) + ' KB'})`;
+        text.title = chk.file.name;
+        text.hidden = false;
+    }
+    const btnTxt = document.querySelector(`#${p}AttachBtn span`);
+    if (btnTxt) btnTxt.textContent = 'Change file';
+    box?.classList.add('has-file'); box?.classList.remove('is-error');
+    if (clr) clr.hidden = false;
+    _reqFormMsg(p, '');
+}
+
+function _reqAttachClear(p, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }   // don't reopen the file picker
+    const input = document.getElementById(p + 'Attach');
+    if (input) input.value = '';
+    const box  = document.getElementById(p + 'AttachBox');
+    box?.classList.remove('has-file', 'is-error');
+    const text = document.getElementById(p + 'AttachText');
+    if (text) { text.textContent = ''; text.title = ''; text.hidden = true; }
+    const btnTxt = document.querySelector(`#${p}AttachBtn span`);
+    if (btnTxt) btnTxt.textContent = 'Upload file';
+    const clr = document.getElementById(p + 'AttachClear');
+    if (clr) clr.hidden = true;
 }
 
 
@@ -3703,6 +3798,13 @@ async function reqSubmit(type) {
         _REQ_SLOTS.indexOf(payload.end_time) <= _REQ_SLOTS.indexOf(payload.start_time)) {
         return _reqFormMsg(p, 'End Time must be later than Start Time.');
     }
+    // Required: the students' signed consent letter.
+    const _att = _reqAttachCheck(p);
+    if (_att.error) {
+        document.getElementById(p + 'AttachBox')?.classList.add('is-error');
+        document.getElementById(p + 'AttachBox')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        return _reqFormMsg(p, _att.error);
+    }
 
 
     // The class has an approved Local arrangement: say what approval / rejection does to it
@@ -3714,11 +3816,17 @@ async function reqSubmit(type) {
 
 
     try {
-        const res  = await fetch('/api/faculty/submit_request', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        const data = await res.json();
+        // multipart: the request fields (JSON) + the consent letter, saved together.
+        const fd = new FormData();
+        fd.append('payload', JSON.stringify(payload));
+        fd.append('attachment', _att.file, _att.file.name);
+        const res  = await fetch('/api/faculty/submit_request', { method: 'POST', body: fd });
+        let data;
+        try { data = await res.json(); }
+        catch (_pe) { data = { success: false, error: res.status === 413
+            ? 'The file is too large. The maximum upload size is 5 MB.'
+            : 'The request could not be submitted. Please try again.' }; }
+        if (data.field === 'attachment') document.getElementById(p + 'AttachBox')?.classList.add('is-error');
         if (data.success) {
             frsCloseForm(type);
             if (!isMakeup) _adjLoadOfficial();   // the just-requested meetings are now pending

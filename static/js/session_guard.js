@@ -4,7 +4,7 @@
  *    re-registers on load, and sends a beacon when it closes. A page load while none of the login's
  *    pages is open means the tabs/browser were closed, and the server ends the
  *    session on the spot — reopening the link requires a login.
- * 2. Heartbeat: an open page re-registers once a minute, also reporting whether the
+ * 2. Heartbeat: an open page re-registers every 20 seconds, also reporting whether the
  *    user did anything (drives SESSION_IDLE_LIMIT). If the closing beacon never
  *    arrives, the missing heartbeats end the session after SESSION_CLOSED_LIMIT.
  * 3. Back/Forward: a page restored from the browser's back/forward cache is shown
@@ -110,9 +110,28 @@
 
     window.addEventListener('pagehide', function () {
         // sendBeacon cannot set headers, so the CSRF token (csrf.js) rides in the body.
-        var body = new Blob([JSON.stringify({ page: pageId, csrf_token: window.CSRF_TOKEN || '' })],
-                            { type: 'application/json' });
-        if (navigator.sendBeacon) navigator.sendBeacon('/api/session/page_closed', body);
+        var payload = JSON.stringify({ page: pageId, csrf_token: window.CSRF_TOKEN || '' });
+        var sent = false;
+        if (navigator.sendBeacon) {
+            try { sent = navigator.sendBeacon('/api/session/page_closed',
+                                              new Blob([payload], { type: 'application/json' })); }
+            catch (e) { sent = false; }
+        }
+        // sendBeacon refused (queue full, or blocked): a keepalive fetch also outlives the
+        // page. Without either, the page counts as open until SESSION_CLOSED_LIMIT.
+        if (!sent) {
+            try {
+                fetch('/api/session/page_closed', {
+                    method: 'POST', keepalive: true, credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' }, body: payload
+                }).catch(function () {});
+            } catch (e) { /* nothing else can be done while the page closes */ }
+        }
+    });
+
+    // Back on the tab: check in right away (a hidden tab's timer may have been slowed).
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') beat();
     });
 
     // Register before reloading: the page just left has already reported itself closed,
@@ -132,5 +151,7 @@
     });
 
     beat();
-    setInterval(beat, 60000);
+    // Every 20s (SESSION_CLOSED_LIMIT in app.py is 90s). A hidden tab may be slowed to
+    // about once a minute by the browser, which still stays inside that limit.
+    setInterval(beat, 20000);
 })();

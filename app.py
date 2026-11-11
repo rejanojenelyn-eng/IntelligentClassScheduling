@@ -685,6 +685,12 @@ def _apply_request_tables():
         _cur.execute("CREATE INDEX IF NOT EXISTS ix_schedule_change_request_group "
                      "ON public.schedule_change_request (request_group)")
 
+        # Faculty request attachments (the students' signed consent letter). One table for
+        # both request kinds; the file itself is stored here (BYTEA) — not on disk, which is
+        # wiped on every Railway deploy, and never under static/ (public). A multi-meeting
+        # adjustment's file is linked to its group's first (lowest) requestid.
+        _cur.execute(REQUEST_ATTACHMENT_DDL)
+
         _conn.commit()
         _request_tables_ensured = True
     except Exception:
@@ -693,6 +699,123 @@ def _apply_request_tables():
     finally:
         _cur.close()
         _conn.close()
+
+# ── Request attachments ─────────────────────────────────────────────────────────
+# Same DDL is given to the hosted database by hand (see the deploy notes); keep in sync.
+REQUEST_ATTACHMENT_DDL = """
+    CREATE TABLE IF NOT EXISTS public.request_attachment (
+        attachmentid  SERIAL PRIMARY KEY,
+        request_type  VARCHAR(20)  NOT NULL
+                      CONSTRAINT chk_request_attachment_type CHECK (request_type IN ('makeup', 'schedule_change')),
+        requestid     INTEGER      NOT NULL,
+        filename      VARCHAR(255) NOT NULL,
+        mime_type     VARCHAR(100) NOT NULL,
+        file_size     INTEGER      NOT NULL CHECK (file_size > 0),
+        file_data     BYTEA        NOT NULL,
+        uploaded_by   VARCHAR(50),
+        uploaded_at   TIMESTAMP    NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ix_request_attachment_request
+        ON public.request_attachment (request_type, requestid);
+"""
+# Signed letters: a PDF or a photo/scan of the page. Content is also checked by
+# _validate_uploads (real file signature), so a renamed file is refused.
+REQUEST_ATTACHMENT_TYPES = {'.pdf': 'application/pdf', '.jpg': 'image/jpeg',
+                            '.jpeg': 'image/jpeg', '.png': 'image/png'}
+REQUEST_ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024   # the whole request is capped at 5 MB
+REQUEST_ATTACHMENT_LABEL = "students' consent letter"
+
+
+def _read_request_attachment(file_storage):
+    """(dict, None) with filename/mime_type/data for a valid upload, or (None, error)."""
+    if not file_storage or not (file_storage.filename or '').strip():
+        return None, (f"Please attach the {REQUEST_ATTACHMENT_LABEL} (PDF, JPG or PNG) — "
+                      "a signed letter showing the students agreed to this request.")
+    name = secure_filename(file_storage.filename) or 'attachment'
+    ext = os.path.splitext(name)[1].lower()
+    mime = REQUEST_ATTACHMENT_TYPES.get(ext)
+    if not mime:
+        return None, 'The attachment must be a PDF, JPG or PNG file.'
+    data = file_storage.read(REQUEST_ATTACHMENT_MAX_BYTES + 1)
+    if not data:
+        return None, 'The attached file is empty. Please choose the file again.'
+    if len(data) > REQUEST_ATTACHMENT_MAX_BYTES:
+        return None, (f'The attachment is too large. The maximum is '
+                      f'{REQUEST_ATTACHMENT_MAX_BYTES // (1024 * 1024)} MB.')
+    return {'filename': name[:255], 'mime_type': mime, 'data': data}, None
+
+
+def _save_request_attachment(cur, request_type, requestid, att, uploaded_by):
+    cur.execute("""
+        INSERT INTO public.request_attachment
+            (request_type, requestid, filename, mime_type, file_size, file_data, uploaded_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (request_type, int(requestid), att['filename'], att['mime_type'], len(att['data']),
+          psycopg2.Binary(att['data']), uploaded_by))
+
+
+def _request_attachments_for(request_type, requestids):
+    """{requestid: [{attachmentid, filename, mime_type, file_size, uploaded_at}]} — no file
+    contents (lists stay light). requestids may include every member of an adjustment group."""
+    ids = sorted({int(i) for i in (requestids or []) if str(i).strip().isdigit()})
+    if not ids:
+        return {}
+    rows = query_db("""
+        SELECT attachmentid, requestid, filename, mime_type, file_size,
+               TO_CHAR(uploaded_at, 'Mon DD, YYYY HH12:MI AM') AS uploaded_at
+        FROM public.request_attachment
+        WHERE request_type = %s AND requestid = ANY(%s)
+        ORDER BY attachmentid
+    """, (request_type, ids)) or []
+    out = {}
+    for r in rows:
+        r = dict(r)
+        out.setdefault(r.pop('requestid'), []).append(r)
+    return out
+
+
+def _attach_request_attachments(items):
+    """Add an `attachments` list to each request item from /api/requests/list or
+    /api/faculty/my_requests (an adjustment group: files of any of its members)."""
+    mk_ids, adj_ids = [], []
+    for it in items:
+        if it.get('req_type') == 'makeup':
+            mk_ids.append(it.get('requestid'))
+        else:
+            adj_ids += [m.get('requestid') for m in (it.get('members') or [])] + [it.get('requestid')]
+    try:
+        mk = _request_attachments_for('makeup', mk_ids)
+        adj = _request_attachments_for('schedule_change', adj_ids)
+    except Exception as e:      # never break the request lists over attachments
+        print(f"[request attachments] lookup failed: {type(e).__name__}: {e}")
+        mk, adj = {}, {}
+    for it in items:
+        if it.get('req_type') == 'makeup':
+            it['attachments'] = mk.get(it.get('requestid'), [])
+        else:
+            ids = {m.get('requestid') for m in (it.get('members') or [])} | {it.get('requestid')}
+            seen, files = set(), []
+            for i in sorted(x for x in ids if x):
+                for f in adj.get(i, []):
+                    if f['attachmentid'] not in seen:
+                        seen.add(f['attachmentid']); files.append(f)
+            it['attachments'] = files
+
+
+def _sweep_orphan_request_attachments(cur):
+    """Remove attachments whose request no longer exists (after a request is deleted)."""
+    cur.execute("SELECT to_regclass('public.request_attachment') IS NOT NULL")
+    r = cur.fetchone()
+    if not (r[0] if not isinstance(r, dict) else list(r.values())[0]):
+        return
+    cur.execute("""
+        DELETE FROM public.request_attachment ra
+        WHERE (ra.request_type = 'makeup' AND NOT EXISTS (
+                  SELECT 1 FROM public.class_meeting_request c WHERE c.requestid = ra.requestid))
+           OR (ra.request_type = 'schedule_change' AND NOT EXISTS (
+                  SELECT 1 FROM public.schedule_change_request s WHERE s.requestid = ra.requestid))
+    """)
+
 
 MAKEUP_EXPIRED_REMARK = 'Expired — the requested date passed without a decision.'
 
@@ -873,8 +996,13 @@ def _no_store_pages(resp):
 
 # The login cookie alone lives until the whole browser quits — closing just the tab,
 # or a browser that restores its last session, kept the user signed in indefinitely.
-# Every signed-in page checks in once a minute (static/js/session_guard.js), so:
-SESSION_CLOSED_LIMIT = timedelta(minutes=3)    # no open page has checked in → tabs were closed
+# Every signed-in page checks in every 20 seconds (static/js/session_guard.js) — a hidden
+# tab may be throttled by the browser to about once a minute — so:
+# No open page has checked in for this long → its tabs were closed. This is the fallback
+# for when the closing beacon never arrives (blocked by an extension, or the browser did
+# not send it); kept above the 60s background-tab throttle so an open tab is never mistaken
+# for a closed one.
+SESSION_CLOSED_LIMIT = timedelta(seconds=90)
 SESSION_IDLE_LIMIT   = timedelta(minutes=30)   # pages open but nobody has used them
 # Each page is registered as open the moment the server sends it (_inject_session_guard)
 # and sends a beacon when it closes. Once a login has had NO open page for this long, the
@@ -1095,6 +1223,11 @@ def _csrf_protect():
     expected, sent = session.get(CSRF_SESSION_KEY), _csrf_submitted_token()
     if expected and sent and hmac.compare_digest(sent, expected):
         return
+    if request.endpoint == 'session_page_closed':
+        # A refused closing beacon leaves its page counted as open (the login then lasts
+        # until SESSION_CLOSED_LIMIT) — note it in the server log so it can be seen.
+        print(f"[session] closing beacon refused (CSRF): expected={'yes' if expected else 'no'} "
+              f"sent={'yes' if sent else 'no'} loggedin={bool(session.get('loggedin'))}", flush=True)
     if _is_page_navigation():
         signed_in = bool(session.get('loggedin'))
         return render_template_string(
@@ -1171,6 +1304,13 @@ def _reject_html_markup():
     for k in request.form:
         if not _skip_markup_check(k):
             field = _find_markup(request.form.getlist(k), k)
+            if field and k == 'payload':
+                # A multipart request sending its fields as JSON in `payload` (e.g. a faculty
+                # request with its consent letter): name the real field, e.g. "reason".
+                try:
+                    field = _find_markup(json.loads(request.form.get(k) or '')) or field
+                except ValueError:
+                    pass
             if field:
                 break
     if not field and request.is_json:
@@ -3881,6 +4021,7 @@ def api_requests_list():
         adj_rows = _grouped
         all_rows    = makeup_rows + adj_rows
         all_rows.sort(key=lambda r: r.get('created_at_raw') or '', reverse=True)
+        _attach_request_attachments(all_rows)   # students' consent letter (names only)
 
         stats = {
             'total':    len(all_rows),
@@ -33935,6 +34076,7 @@ def api_faculty_my_requests():
 
         combined = [dict(r) for r in makeup] + [dict(r) for r in adj]
         combined.sort(key=lambda x: x.get('date_submitted',''), reverse=True)
+        _attach_request_attachments(combined)   # their consent letter (names only)
         return jsonify({'success': True, 'requests': combined})
     except Exception as e:
         return jsonify({'success': False, 'error': _public_error(e)}), 500
@@ -34134,8 +34276,10 @@ def api_faculty_delete_request(req_type, req_id):
                     return jsonify({'success': False, 'error': 'This request is part of the schedule record and '
                                                                'cannot be deleted.'}), 400
         cur.execute(f"DELETE FROM {table} WHERE requestid = ANY(%s) AND submitted_by = %s", [ids, emp_num])
+        _deleted = cur.rowcount
+        _sweep_orphan_request_attachments(cur)   # its consent letter goes with it
         conn.commit()
-        return jsonify({'success': True, 'deleted': cur.rowcount})
+        return jsonify({'success': True, 'deleted': _deleted})
     except Exception as e:
         conn.rollback()
         print(f"[my requests] delete failed: {type(e).__name__}: {e}")
@@ -36003,6 +36147,42 @@ def _num_cfg(v):
         return 1.0
 
 
+# --- Request attachment (students' consent letter): view / download ---
+@app.route('/api/requests/attachment/<int:attachment_id>')
+def api_request_attachment(attachment_id):
+    """Only the Academic Head (who reviews requests) and the faculty who submitted the
+    request may open it. ?download=1 saves it instead of opening it in the browser."""
+    if 'loggedin' not in session or session.get('role') not in ('Academic Head', 'Faculty'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    _ensure_request_tables()
+    row = query_db("""
+        SELECT ra.filename, ra.mime_type, ra.file_data,
+               COALESCE(c.submitted_by, s.submitted_by) AS submitted_by
+        FROM public.request_attachment ra
+        LEFT JOIN public.class_meeting_request  c ON ra.request_type = 'makeup'          AND c.requestid = ra.requestid
+        LEFT JOIN public.schedule_change_request s ON ra.request_type = 'schedule_change' AND s.requestid = ra.requestid
+        WHERE ra.attachmentid = %s
+    """, (attachment_id,), one=True)
+    if not row:
+        return jsonify({'success': False, 'error': 'Attachment not found.'}), 404
+    if session.get('role') == 'Faculty':
+        emp = session.get('employeenumber')
+        if not emp:
+            acc = query_db("SELECT employeenumber FROM accounts WHERE username = %s",
+                           [session.get('username')], one=True)
+            emp = acc['employeenumber'] if acc else None
+        if not emp or str(emp) != str(row['submitted_by'] or ''):
+            return jsonify({'success': False, 'error': 'Attachment not found.'}), 404
+    from flask import send_file
+    resp = send_file(io.BytesIO(bytes(row['file_data'])), mimetype=row['mime_type'],
+                     as_attachment=request.args.get('download') == '1',
+                     download_name=row['filename'])
+    # Personal data (students' names/signatures): never kept in shared caches.
+    resp.headers['Cache-Control'] = 'private, no-store'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    return resp
+
+
 # --- API: Submit a faculty room request ---
 @app.route('/api/faculty/submit_request', methods=['POST'])
 def api_faculty_submit_request():
@@ -36010,7 +36190,17 @@ def api_faculty_submit_request():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 401
     try:
         from datetime import datetime as _dt
-        data       = request.json or {}
+        # Sent as multipart/form-data: the request fields as JSON in `payload`, plus the
+        # required `attachment` (students' signed consent letter).
+        if request.mimetype == 'multipart/form-data':
+            try:
+                data = json.loads(request.form.get('payload') or '{}')
+            except ValueError:
+                return jsonify({'success': False, 'error': 'The request could not be read. Please try again.'}), 400
+            if not isinstance(data, dict):
+                data = {}
+        else:
+            data = request.json or {}
         req_type   = data.get('request_type', '')   # 'makeup' | 'adjustment'
         room_id    = data.get('room_id')
         section_id = data.get('section_id')
@@ -36037,6 +36227,12 @@ def api_faculty_submit_request():
             return jsonify({'success': False, 'error':
                 'Please provide a reason for the ' + ('make-up class' if req_type == 'makeup'
                                                       else 'schedule adjustment') + ' request.'}), 400
+        # Required: the students' signed consent letter (stored with the request below).
+        _attachment = None
+        if req_type in ('makeup', 'adjustment'):
+            _attachment, _att_err = _read_request_attachment(request.files.get('attachment'))
+            if _att_err:
+                return jsonify({'success': False, 'error': _att_err, 'field': 'attachment'}), 400
 
         # Map "07:30 AM" → timeid in timeslot table
         def _time_to_id(t_str):
@@ -36112,7 +36308,9 @@ def api_faculty_submit_request():
                         (scheduleid, requested_date, new_starttimeid, new_endtimeid,
                          new_roomid, reason, notes, submitted_by, status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+                    RETURNING requestid
                 """, (scheduleid, data.get('request_date'), start_tid, end_tid, rid, reason, notes, submitted_by))
+                _save_request_attachment(cur, 'makeup', cur.fetchone()[0], _attachment, submitted_by)
 
             elif req_type == 'adjustment':
                 # One request may move SEVERAL meetings of the same class (Monday 2h +
@@ -36284,6 +36482,8 @@ def api_faculty_submit_request():
                     """, (scheduleid, versionid, official_sessionid, change_type, day,
                           start_tid, end_tid, rid, reason, submitted_by, request_group))
                     _adj_ids.append(cur.fetchone()[0])
+                # One letter for the whole request — linked to its first meeting's row.
+                _save_request_attachment(cur, 'schedule_change', min(_adj_ids), _attachment, submitted_by)
             else:
                 return jsonify({'success': False, 'error': 'Unknown request type.'}), 400
 
@@ -36306,6 +36506,7 @@ def api_faculty_submit_request():
                 elif _err or not _sum.get('all_ok'):
                     cur.execute("DELETE FROM schedule_change_request WHERE requestid = ANY(%s) AND status = 'Pending'",
                                 (_adj_ids,))
+                    _sweep_orphan_request_attachments(cur)
                     conn.commit()
                     _msgs = (_sum or {}).get('conflicts') or []
                     _msgs += [m.get('error') or str(m) for m in ((_sum or {}).get('merge_restrictions') or [])]
@@ -37487,6 +37688,7 @@ def _purge_schedule_history(cur, scheduleids, semester_ids=None):
                                        WHERE scheduleid = ANY(%(ids)s))
                       OR official_sessionid IN """ + p['sess'], p)
     cur.execute("DELETE FROM public.class_meeting_request WHERE scheduleid = ANY(%(ids)s)", p)
+    _sweep_orphan_request_attachments(cur)
     cur.execute("DELETE FROM public.schedule_exception_log WHERE scheduleid = ANY(%(ids)s)", p)
     cur.execute("""DELETE FROM public.local_schedule_adjustment
                    WHERE scheduleid = ANY(%(ids)s) OR sessionid IN """ + p['sess'], p)
