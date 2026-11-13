@@ -1575,13 +1575,15 @@ def _inject_session_guard(resp):
             resp.set_data(html[:cut] + tag + html[cut:])
     return resp
 
-def write_activity_log(action, details, category='system', color='gray'):
-    """Insert one row into activity_log. Never raises — logging must not break the caller."""
+def write_activity_log(action, details, category='system', color='gray', initiated_by=None):
+    """Insert one row into activity_log. Never raises — logging must not break the caller.
+    initiated_by: who did it when there is no signed-in session yet (a sign-in attempt,
+    a Forgot Password reset); otherwise the signed-in username."""
     _ensure_activity_log_table()
     try:
         _conn = get_db_connection()
         _cur  = _conn.cursor()
-        user  = session.get('username', 'System')
+        user  = (str(initiated_by)[:100] if initiated_by else None) or session.get('username', 'System')
         _cur.execute(
             "INSERT INTO activity_log (action, details, initiated_by, category, log_color)"
             " VALUES (%s, %s, %s, %s, %s)",
@@ -1612,7 +1614,359 @@ _LOG_COLORS = {
     'program':    'indigo',
     'curriculum': 'teal',
     'system':     'gray',
+    'account':    'blue',     # sign-in/out, account setup, profile, admin account actions
+    'security':   'red',      # failed sign-ins, lockouts, password resets
+    'request':    'teal',     # faculty make-up / schedule adjustment requests
+    'room':       'orange',   # rooms and buildings
+    'export':     'gray',     # downloads of system data (personal data leaving the system)
 }
+
+
+# ─────────────────────────────────────────────────────────────
+#  ACTIVITY LOG FOR ROUTES WITHOUT THEIR OWN LOG CALL
+# ─────────────────────────────────────────────────────────────
+# endpoint -> (action, category, detail(d, pre) -> str[, pre(d) -> dict]).
+#   d   = the request's own data (URL args, form fields, JSON) — never passwords/codes/tokens
+#   pre = names looked up BEFORE the route runs (a deleted room has no name afterwards)
+# Logged only when the action succeeded: no 4xx/5xx, no `"success": false` JSON, and no
+# error flash message. Routes that log for themselves (write_activity_log) are not listed.
+_AUDIT_SECRET_KEY_RE = re.compile(r'pass|token|code|otp|csrf|secret', re.I)
+
+
+def _aud(d, *keys, default='—'):
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, '', [], {}):
+            s = ', '.join(map(str, v)) if isinstance(v, (list, tuple)) else str(v)
+            return s[:120]
+    return default
+
+
+def _aud_n(d, key):
+    v = d.get(key)
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            v = [x for x in v.split(',') if x.strip()]
+    return len(v) if isinstance(v, (list, tuple)) else (1 if v else 0)
+
+
+def _aud_one(sql, args, fmt):
+    try:
+        r = query_db(sql, args, one=True)
+        return fmt(r) if r else None
+    except Exception:
+        return None
+
+
+def _pre_employee(d):
+    emp = d.get('emp_num') or d.get('employee_number')
+    return {'name': _aud_one("SELECT TRIM(firstname || ' ' || lastname) AS n FROM faculty WHERE employeenumber = %s",
+                             [str(emp)], lambda r: f"{r['n']} ({emp})")} if emp else {}
+
+
+def _pre_archived(d):
+    aid = d.get('archive_id')
+    return {'name': _aud_one("SELECT TRIM(firstname || ' ' || lastname) AS n, employeenumber FROM faculty_archive "
+                             "WHERE facultyarchiveid = %s", [aid], lambda r: f"{r['n']} ({r['employeenumber']})")} \
+        if str(aid or '').isdigit() else {}
+
+
+def _pre_room(d):
+    rid = d.get('room_id')
+    return {'name': _aud_one("SELECT r.roomname, b.buildingname FROM room r LEFT JOIN building b "
+                             "ON b.buildingid = r.buildingid WHERE r.roomid = %s", [rid],
+                             lambda r: f"{r['roomname']} ({r['buildingname'] or 'no building'})")} \
+        if str(rid or '').isdigit() else {}
+
+
+def _pre_building(d):
+    bid = d.get('bldg_id')
+    return {'name': _aud_one("SELECT buildingname FROM building WHERE buildingid = %s", [bid],
+                             lambda r: r['buildingname'])} if str(bid or '').isdigit() else {}
+
+
+def _pre_curriculum(d):
+    cid = d.get('curriculum_id')
+    return {'name': _aud_one("SELECT curriculumcode, programcode, curriculumyear, curriculumtype FROM curriculum "
+                             "WHERE curriculumid = %s", [cid],
+                             lambda r: f"{r['programcode']} {r['curriculumcode']} ({r['curriculumyear']}, "
+                                       f"{str(r['curriculumtype'] or '').replace('_', ' ').title()})")} \
+        if str(cid or '').isdigit() else {}
+
+
+def _pre_account(d):
+    uid = d.get('user_id')
+    return {'name': _aud_one("SELECT username, role FROM accounts WHERE userid = %s", [uid],
+                             lambda r: f"{r['username']} ({r['role']})")} if str(uid or '').isdigit() else {}
+
+
+def _pre_version(d):
+    vid = d.get('version_id')
+    return {'name': _aud_one("""
+        SELECT cs.subjectcode, sec.sectionname, sv.status FROM schedule_version sv
+        JOIN schedule sc ON sc.scheduleid = sv.scheduleid
+        LEFT JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+        LEFT JOIN sections sec ON sec.sectionid = sc.sectionid
+        WHERE sv.versionid = %s""", [vid],
+        lambda r: f"{r['subjectcode'] or '—'} · {r['sectionname'] or '—'} ({r['status']})")} \
+        if str(vid or '').isdigit() else {}
+
+
+def _pre_faculty_request(d):
+    rt, rid = d.get('req_type'), d.get('req_id')
+    table = {'makeup': 'class_meeting_request', 'adjustment': 'schedule_change_request'}.get(rt)
+    if not table or not str(rid or '').isdigit():
+        return {}
+    return {'name': _aud_one(f"""
+        SELECT cs.subjectcode, sec.sectionname, r.status FROM {table} r
+        LEFT JOIN schedule sc ON sc.scheduleid = r.scheduleid
+        LEFT JOIN curriculumsubject cs ON cs.curriculumsubjectid = sc.curriculumsubjectid
+        LEFT JOIN sections sec ON sec.sectionid = sc.sectionid
+        WHERE r.requestid = %s""", [rid],
+        lambda r: f"{'make-up' if rt == 'makeup' else 'schedule adjustment'} request #{rid} "
+                  f"for {r['subjectcode'] or '—'} · {r['sectionname'] or '—'} (was {r['status']})")}
+
+
+def _emp_name(d):
+    n = ' '.join(x for x in (_aud(d, 'first_name', default=''), _aud(d, 'last_name', default='')) if x)
+    emp = _aud(d, 'employee_number', 'emp_num', default='')
+    return f"{n} ({emp})" if n and emp else (n or emp or '—')
+
+
+def _room_desc(d):
+    return (f"{_aud(d, 'room_name')} — {_aud(d, 'room_type')}, capacity {_aud(d, 'capacity')}")
+
+
+_AUDIT_ROUTES = {
+    # ── Phase 1: accounts (Admin) and faculty requests ──────────────────────────
+    'account_reset_password': ('Reset Account Password', 'security',
+        lambda d, p: f"Admin reset the password of {p.get('name') or _aud(d, 'username')}", _pre_account),
+    'account_toggle_status': ('Changed Account Status', 'security',
+        lambda d, p: f"{p.get('name') or 'Account ' + _aud(d, 'user_id')} set to "
+                     f"{'Active' if str(d.get('new_status')).lower() in ('1', 'true', 'active') else 'Inactive'}",
+        _pre_account),
+    'admin_account_correction_decide': ('Decided Correction Request', 'account',
+        lambda d, p: f"Personal-information correction request #{_aud(d, 'request_id')} "
+                     f"{_aud(d, 'decision').lower()}"),
+    'api_user_profile_update': ('Updated Employment Details', 'account',
+        lambda d, p: 'Updated own employment details (status / designation / specialization)'),
+    'api_user_photo_upload': ('Changed Profile Photo', 'account', lambda d, p: 'Uploaded a new profile photo'),
+    'api_faculty_update_request': ('Edited Request', 'request',
+        lambda d, p: f"Edited pending {p.get('name') or 'request #' + _aud(d, 'req_id')}", _pre_faculty_request),
+    'api_faculty_cancel_request': ('Cancelled Request', 'request',
+        lambda d, p: f"Cancelled {p.get('name') or 'request #' + _aud(d, 'req_id')}", _pre_faculty_request),
+    'api_faculty_delete_request': ('Deleted Request', 'request',
+        lambda d, p: f"Deleted {p.get('name') or 'request #' + _aud(d, 'req_id')}", _pre_faculty_request),
+    'api_manual_own_makeup_cancel': ('Cancelled Make-up Class', 'request',
+        lambda d, p: f"Cancelled own make-up class #{_aud(d, 'req_id')}"),
+
+    # ── Phase 2: faculty, rooms, curriculum, settings ───────────────────────────
+    **{ep: ('Added Faculty', 'employee', lambda d, p: f"Added faculty {_emp_name(d)}")
+       for ep in ('add_employee', 'api_add_employee', 'admin_add_employee', 'admin_api_add_employee')},
+    **{ep: ('Edited Faculty', 'employee', lambda d, p: f"Edited faculty {_emp_name(d)}")
+       for ep in ('edit_employee', 'api_edit_employee', 'admin_edit_employee', 'admin_api_edit_employee')},
+    **{ep: ('Archived Faculty', 'employee',
+            lambda d, p: f"Archived faculty {p.get('name') or _aud(d, 'emp_num')}", _pre_employee)
+       for ep in ('archive_employee', 'admin_archive_employee')},
+    **{ep: ('Archived Faculty (Bulk)', 'employee',
+            lambda d, p: f"Archived {_aud_n(d, 'employee_ids')} faculty: {_aud(d, 'employee_ids')}")
+       for ep in ('bulk_archive', 'admin_bulk_archive')},
+    **{ep: ('Restored Faculty', 'employee',
+            lambda d, p: f"Restored archived faculty {p.get('name') or '#' + _aud(d, 'archive_id')}", _pre_archived)
+       for ep in ('acad_restore_employee', 'admin_restore_employee',
+                  'acad_faculty_restore_archived', 'admin_faculty_restore_archived')},
+    **{ep: ('Restored Faculty (Bulk)', 'employee',
+            lambda d, p: f"Restored {_aud_n(d, 'archive_ids')} archived faculty")
+       for ep in ('acad_bulk_restore', 'admin_bulk_restore')},
+    **{ep: ('Imported Faculty', 'employee',
+            lambda d, p: f"Imported faculty from a file ({_aud(d, '_filename', default='uploaded file')})")
+       for ep in ('bulk_import', 'admin_bulk_import', 'acad_faculty_import_xlsx', 'admin_faculty_import_xlsx',
+                  'acad_faculty_doc_confirm', 'admin_faculty_doc_confirm')},
+    **{ep: ('Added Room', 'room', lambda d, p: f"Added room {_room_desc(d)}")
+       for ep in ('add_room', 'api_add_room')},
+    **{ep: ('Edited Room', 'room',
+            lambda d, p: f"Edited room {p.get('name') or '#' + _aud(d, 'room_id')} → {_room_desc(d)}", _pre_room)
+       for ep in ('edit_room_submit', 'api_edit_room')},
+    **{ep: ('Deleted Room', 'room',
+            lambda d, p: f"Deleted room {p.get('name') or '#' + _aud(d, 'room_id')}", _pre_room)
+       for ep in ('delete_room', 'api_delete_room')},
+    **{ep: ('Added Building', 'room', lambda d, p: f"Added building {_aud(d, 'bldg_name', 'name')}")
+       for ep in ('add_building', 'api_add_building')},
+    **{ep: ('Edited Building', 'room',
+            lambda d, p: f"Renamed building {p.get('name') or '#' + _aud(d, 'bldg_id')} → {_aud(d, 'bldg_name', 'name')}",
+            _pre_building)
+       for ep in ('edit_building', 'api_edit_building')},
+    **{ep: ('Deleted Building', 'room',
+            lambda d, p: f"Deleted building {p.get('name') or '#' + _aud(d, 'bldg_id')}", _pre_building)
+       for ep in ('delete_building', 'api_delete_building')},
+    **{ep: ('Imported Curriculum', 'curriculum',
+            lambda d, p: f"Imported curriculum for {_aud(d, 'program_code')} C.Y {_aud(d, 'curriculum_year')}"
+                         + (' (with Bridging)' if str(d.get('has_bridging')).lower() in ('1', 'true', 'on') else ''))
+       for ep in ('import_curriculum', 'import_curriculum_xlsx', 'confirm_pdf_import')},
+    'admin_delete_curriculum': ('Deleted Curriculum', 'curriculum',
+        lambda d, p: f"Deleted curriculum {p.get('name') or '#' + _aud(d, 'curriculum_id')}", _pre_curriculum),
+    'assign_curriculum': ('Assigned Curriculum', 'curriculum',
+        lambda d, p: f"Assigned curriculum {p.get('name') or '#' + _aud(d, 'curriculum_id')} to "
+                     f"{_aud(d, 'offering_code')} Year {_aud(d, 'yearlevel')} ({_aud(d, 'academicyearid')})",
+        _pre_curriculum),
+    'autogenerate_assignments': ('Auto-Assigned Curricula', 'curriculum',
+        lambda d, p: 'Auto-generated curriculum assignments for every program and year level'),
+    'update_scheduler_config': ('Updated Scheduler Settings', 'settings',
+        lambda d, p: 'Changed the scheduling configuration'),
+    'settings_toggle_program_yearlevel': ('Changed Year Level Status', 'program',
+        lambda d, p: f"{_aud(d, 'program_code')} Year {_aud(d, 'yearlevel')} set to "
+                     f"{'Active' if str(d.get('isactive')).lower() in ('1', 'true') else 'Inactive'}"),
+    'api_create_merge_load_policy': ('Added Merge Load Policy', 'settings',
+        lambda d, p: f"Added merged-class load rule {_aud(d, 'policyname', 'subjectcode')}"),
+    'api_update_merge_load_policy': ('Updated Merge Load Policy', 'settings',
+        lambda d, p: f"Updated merged-class load rule #{_aud(d, 'policyid')}"),
+    'api_delete_merge_load_policy': ('Deleted Merge Load Policy', 'settings',
+        lambda d, p: f"Deleted merged-class load rule #{_aud(d, 'policyid')}"),
+
+    # ── Phase 3: schedule actions that change or remove saved schedules ─────────
+    'api_delete_session': ('Deleted Schedule Session', 'schedule',
+        lambda d, p: f"Deleted a saved session of {_aud(d, 'subject_code', default='a subject')}"
+                     + (f" on {d['daydesc']}" if d.get('daydesc') else '')
+                     + (f" (version #{d['version_id']})" if d.get('version_id') else '')),
+    'api_delete_draft': ('Deleted Draft', 'schedule',
+        lambda d, p: f"Deleted Draft {p.get('name') or 'version #' + _aud(d, 'version_id')}", _pre_version),
+    'api_restore_version': ('Restored Schedule Version', 'schedule',
+        lambda d, p: f"Restored an earlier version: {p.get('name') or 'version #' + _aud(d, 'version_id')}",
+        _pre_version),
+    'api_archive_draft_for_editor': ('Moved Draft to Editor', 'schedule',
+        lambda d, p: f"Opened the {_aud(d, 'program')} Year {_aud(d, 'yearLevel')} Draft in the Manual Editor "
+                     f"(previous Draft archived)"),
+    'import_schedule': ('Imported Schedule', 'schedule',
+        lambda d, p: f"Imported a schedule file for {_aud(d, 'ay_id')} semester {_aud(d, 'semester_type')}"),
+    'sis_import_confirm': ('Imported SIS Schedule', 'schedule',
+        lambda d, p: f"Imported {_aud_n(d, 'rows')} SIS schedule row(s) for {_aud(d, 'ay_id')} "
+                     f"semester {_aud(d, 'semester_type')}"),
+    'api_manual_save_assignment': ('Assigned Faculty to Subject', 'schedule',
+        lambda d, p: f"{_aud(d, 'subjectcode')} ({_aud(d, 'program')} Year {_aud(d, 'year_level')}, "
+                     f"{_aud(d, 'acadYear')}) → faculty {_aud(d, 'employeenumber')}"),
+    'api_manual_delete_assignment': ('Removed Faculty Assignment', 'schedule',
+        lambda d, p: f"Removed the faculty of {_aud(d, 'subjectcode')} ({_aud(d, 'program')} Year "
+                     f"{_aud(d, 'year_level')})"),
+    'api_deactivate_local_arrangement': ('Deactivated Local Arrangement', 'schedule',
+        lambda d, p: f"Deactivated Local arrangement #{_aud(d, 'arr_id')} (back to the Official schedule)"),
+    'api_discard_local_draft': ('Discarded Local Draft', 'schedule',
+        lambda d, p: f"Discarded Local draft #{_aud(d, 'arr_id')}"),
+
+    # ── Phase 4: exports (personal / schedule data leaving the system) ──────────
+    **{ep: ('Exported Faculty List', 'export', lambda d, p: f"Downloaded the faculty list ({_aud(d, '_format')})")
+       for ep in ('admin_export_employees_docx', 'admin_export_employees_xlsx',
+                  'export_employees_docx', 'export_employees_xlsx')},
+    **{ep: ('Exported Archived Faculty', 'export',
+            lambda d, p: f"Downloaded the archived faculty list ({_aud(d, '_format')})")
+       for ep in ('admin_export_archived_employees_docx', 'admin_export_archived_employees_xlsx',
+                  'export_archived_employees_docx', 'export_archived_employees_xlsx')},
+    **{ep: ('Exported Curriculum', 'export', lambda d, p: f"Downloaded curriculum data ({_aud(d, '_format')})")
+       for ep in ('admin_curriculum_export_data', 'admin_export_curriculum_docx', 'admin_export_curriculum_xlsx')},
+    **{ep: ('Exported Rooms', 'export', lambda d, p: f"Downloaded the room list ({_aud(d, '_format')})")
+       for ep in ('admin_rooms_export_data', 'admin_export_rooms_docx', 'admin_export_rooms_xlsx')},
+    **{ep: ('Exported Schedule', 'export', lambda d, p: f"Downloaded schedules ({_aud(d, '_format')})")
+       for ep in ('schedule_export_multi', 'faculty_schedule_export', 'api_export_generated_schedule',
+                  'room_schedule_export', 'faculty_teaching_assignment_export', 'faculty_weekly_schedule_export')},
+    'facsub_export': ('Exported Faculty Subjects', 'export',
+        lambda d, p: f"Downloaded faculty subject loads ({_aud(d, '_format')})"),
+    'report_export': ('Exported Report', 'export',
+        lambda d, p: f"Downloaded the {_aud(d, 'report_type').replace('_', ' ')} report ({_aud(d, '_format')})"),
+}
+# GET routes that still count (a download link, or the Activity Logs PDF's data).
+_AUDIT_GET_ROUTES = {'admin_activity_logs_api'}
+
+
+def _audit_request_data():
+    d = dict(request.view_args or {})
+    for k in request.form:
+        if not _AUDIT_SECRET_KEY_RE.search(k):
+            vals = request.form.getlist(k)
+            d[k] = vals[0] if len(vals) == 1 else vals
+    js = request.get_json(silent=True) if request.is_json else None
+    if isinstance(js, dict):
+        for k, v in js.items():
+            if not _AUDIT_SECRET_KEY_RE.search(str(k)) and k not in d:
+                d[k] = v
+    f = next(iter(request.files.values()), None) if request.files else None
+    if f is not None and f.filename:
+        d['_filename'] = secure_filename(f.filename)[:80]
+    fmt = (d.get('format') or d.get('fmt') or d.get('export_format') or
+           ('DOCX' if request.path.endswith('docx') else 'XLSX' if request.path.endswith('xlsx') else ''))
+    d['_format'] = str(fmt).upper() or 'file'
+    return d
+
+
+@app.before_request
+def _audit_before():
+    ep = request.endpoint
+    if ep not in _AUDIT_ROUTES or (request.method in _CSRF_SAFE_METHODS and ep not in _AUDIT_GET_ROUTES):
+        return
+    g._audit_flashes = []
+    spec = _AUDIT_ROUTES[ep]
+    if len(spec) > 3 and spec[3] and session.get('loggedin'):
+        try:
+            g._audit_pre = spec[3](_audit_request_data()) or {}
+        except Exception:
+            g._audit_pre = {}
+
+
+def _audit_on_flash(sender, message, category, **extra):
+    if hasattr(g, '_audit_flashes'):
+        g._audit_flashes.append(category)
+
+
+try:
+    from flask import message_flashed as _message_flashed
+    _message_flashed.connect(_audit_on_flash, app)
+except Exception:   # signals unavailable: error flashes just can't veto a log entry
+    pass
+
+
+def _audit_succeeded(resp):
+    if resp.status_code >= 400:
+        return False
+    if resp.mimetype == 'application/json':
+        try:
+            body = resp.get_json(silent=True)
+        except Exception:
+            body = None
+        if isinstance(body, dict) and body.get('success') is False:
+            return False
+    cats = [str(c).lower() for c in getattr(g, '_audit_flashes', [])]
+    if any(c in ('error', 'danger') for c in cats):
+        return False
+    if 'warning' in cats and 'success' not in cats:   # e.g. "already exists" — nothing was done
+        return False
+    return True
+
+
+@app.after_request
+def _audit_after(resp):
+    ep = request.endpoint
+    try:
+        if ep == 'admin_activity_logs_api':
+            # Only the Export PDF's "all" fetch is an export; table paging is not.
+            if request.args.get('all') == '1' and resp.status_code < 400:
+                filt = ', '.join(f"{k}={request.args.get(k)}" for k in ('q', 'cat', 'role', 'user')
+                                 if request.args.get(k)) or 'no filters'
+                write_activity_log('Exported Activity Logs', f"Downloaded the activity logs as PDF ({filt})",
+                                   category='export', color=_LOG_COLORS['export'])
+            return resp
+        if ep not in _AUDIT_ROUTES or request.method in _CSRF_SAFE_METHODS:
+            return resp
+        if not session.get('loggedin') or not _audit_succeeded(resp):
+            return resp
+        action, category, detail = _AUDIT_ROUTES[ep][:3]
+        try:
+            text = detail(_audit_request_data(), getattr(g, '_audit_pre', {}) or {})
+        except Exception:
+            text = action
+        write_activity_log(action, text, category=category, color=_LOG_COLORS.get(category, 'gray'))
+    except Exception as e:      # an audit problem never breaks the response
+        print(f"[audit] {ep}: {type(e).__name__}: {e}")
+    return resp
 
 # --- CONTEXT PROCESSOR FOR LOGGED-IN USER DISPLAY NAME ---
 @app.context_processor
@@ -1986,6 +2340,9 @@ def setup():
 def logout():
     if session.get('username') and not session.get('account_setup_complete', True):
         _setup_discard(session['username'])          # signing out mid-setup saves nothing
+    if session.get('loggedin') and session.get('username'):
+        write_activity_log('Signed Out', f"{session.get('role') or 'User'} signed out",
+                           category='account', color=_LOG_COLORS['account'])
     session.clear()
     return redirect(url_for('login'))
 
@@ -2019,9 +2376,17 @@ def login():
             conn.close()
 
         if outcome['result'] == 'ip_limited':
+            write_activity_log('Sign-In Blocked',
+                               f"Too many sign-in attempts from IP {_client_ip()} — attempt for '{username[:50]}' refused",
+                               category='security', color=_LOG_COLORS['security'], initiated_by=username[:50] or 'Unknown')
             flash(_loginsec.IP_LIMIT_MESSAGE, 'error')
             return redirect(url_for('login'))
         if outcome['result'] == 'locked':
+            if outcome['new_lock']:
+                write_activity_log('Account Locked',
+                                   f"'{username[:50]}' was locked after repeated wrong passwords "
+                                   f"(IP {_client_ip()})",
+                                   category='security', color=_LOG_COLORS['security'], initiated_by=username[:50])
             if outcome['new_lock'] and outcome.get('user'):
                 _loginsec.dispatch_lockout_email(Config, outcome['user'])   # once per lockout
             flash(_loginsec.locked_message(outcome['seconds_left'], outcome['new_lock']), 'locked')
@@ -2031,6 +2396,9 @@ def login():
             session['login_lock_user'] = username
             return redirect(url_for('login'))
         if outcome['result'] == 'invalid':
+            write_activity_log('Failed Sign-In',
+                               f"Wrong username or password for '{username[:50]}' (IP {_client_ip()})",
+                               category='security', color=_LOG_COLORS['security'], initiated_by=username[:50] or 'Unknown')
             flash(_loginsec.invalid_message(outcome['failed'], outcome['remaining']),
                   'warning' if outcome['failed'] >= _loginsec.WARN_FROM_ATTEMPT else 'error')
             return redirect(url_for('login'))
@@ -2040,6 +2408,9 @@ def login():
         user_data = {k.lower(): v for k, v in outcome['user'].items()}
         db_role   = user_data.get('role')
         if not user_data.get('isactive', True):
+            write_activity_log('Sign-In Refused', f"Deactivated account '{user_data.get('username')}' tried to sign in",
+                               category='security', color=_LOG_COLORS['security'],
+                               initiated_by=user_data.get('username'))
             flash("Your account has been deactivated. Please contact the Administrator.")
             return redirect(url_for('login'))
 
@@ -2080,6 +2451,11 @@ def login():
         session['last_seen'] = session['last_active'] = datetime.now().timestamp()
         session['sid'] = uuid.uuid4().hex   # keys this login's open-page tracking
         _track_login(session['sid'])
+        write_activity_log('Signed In',
+                           f"{db_role} signed in"
+                           + (' for the first time (Account Setup required)' if not setup_done
+                              else ' (must change password)' if must_change else ''),
+                           category='account', color=_LOG_COLORS['account'])
         try:
             _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
             _cur2.execute("UPDATE accounts SET last_login = NOW() WHERE username = %s", (user_data.get('username'),))
@@ -2268,6 +2644,10 @@ def forgot_password_new():
     finally:
         conn.close()
     session.pop('fp_rid', None); session.pop('fp_token', None)
+    write_activity_log('Password Reset',
+                       "Password reset with Forgot Password (email code verified)"
+                       + ('; the sign-in lock was lifted' if was_locked else ''),
+                       category='security', color=_LOG_COLORS['security'], initiated_by=username)
     session['saved_username'] = username          # pre-fills the Login form
     # The reset lifted any lockout: the login page must not keep counting it down.
     session.pop('login_lock_until', None); session.pop('login_lock_user', None)
@@ -3070,6 +3450,16 @@ def _setup_commit(username, draft, has_faculty):
     if new_username:
         session['username'] = new_username
         session['setup_new_username'] = new_username     # the All Set page tells them
+    _changed = [label for key, label in (('email', 'email'), ('contact', 'contact number'),
+                                         ('photo', 'photo')) if key in draft]
+    if has_faculty and (draft.get('faculty') or {}):
+        _changed.append('employment details')
+    write_activity_log('Completed Account Setup',
+                       'Finished first sign-in Account Setup'
+                       + (' (new password set)' if pending else '')
+                       + (f"; updated {', '.join(_changed)}" if _changed else '')
+                       + (f"; Employee ID changed to {new_username}" if new_username else ''),
+                       category='account', color=_LOG_COLORS['account'])
     return None
 
 def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names,
@@ -36517,6 +36907,23 @@ def api_faculty_submit_request():
                                     'conflicts': [{'type': 'conflict', 'message': m} for m in _msgs]}), 409
         finally:
             conn.close()
+
+        # Only a request that was kept (an adjustment that failed its check was removed above).
+        try:
+            _sec = query_db("SELECT sectionname FROM sections WHERE sectionid = %s",
+                            [int(section_id)], one=True) if str(section_id or '').isdigit() else None
+            _where = f"{subject or '—'} · {(_sec or {}).get('sectionname') or 'section ' + str(section_id or '—')}"
+            if req_type == 'makeup':
+                _what = f"Make-up class on {data.get('request_date') or '—'}, {start_time or '—'}–{end_time or '—'}"
+            else:
+                _n = len(_adj_ids)
+                _what = f"Schedule adjustment of {_n} meeting{'s' if _n != 1 else ''}"
+            write_activity_log('Submitted Request',
+                               f"{_what} for {_where}; students' consent letter attached "
+                               f"({(_attachment or {}).get('filename', '—')})",
+                               category='request', color=_LOG_COLORS['request'])
+        except Exception as _le:
+            print(f"[submit_request] activity log failed: {_le}")
 
         return jsonify({'success': True, 'advisories': _advisories})
     except Exception as e:

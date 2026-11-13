@@ -608,7 +608,7 @@
                placeholder="Search by user, action, or log content…" oninput="filterLogs()">
         <select class="log-filter" id="logFilterCat" onchange="filterLogs()">
           <option value="">All Categories</option>
-          {% set _base_cats = ['calendar', 'settings', 'employee', 'approval', 'schedule', 'program', 'curriculum', 'account', 'system'] %}
+          {% set _base_cats = ['account', 'security', 'request', 'schedule', 'approval', 'employee', 'room', 'curriculum', 'program', 'calendar', 'settings', 'export', 'system'] %}
           {% for c in (_base_cats + (activity_log_categories or []))|unique %}
           <option value="{{ c }}">{{ c | title }}</option>
           {% endfor %}
