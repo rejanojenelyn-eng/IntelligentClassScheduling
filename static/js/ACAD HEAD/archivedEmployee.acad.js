@@ -241,11 +241,13 @@ async function _exportPDF(data, filename) {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const now = new Date().toLocaleString();
 
+    // Letterhead logo, centered (pdf_house_style.js); the header moves down below it.
+    const _d = (window.DSSPdf ? DSSPdf.logo(doc, 6) : 6) - 6;
     doc.setTextColor(0, 0, 0);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(17);
-    doc.text('Archived Employee Records', 148.5, 14, { align: 'center' });
+    doc.text('Archived Employee Records', 148.5, 14 + _d, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text('Generated: ' + now, 148.5, 21, { align: 'center' });
+    doc.text('Generated: ' + now, 148.5, 21 + _d, { align: 'center' });
 
     doc.autoTable({
         columns: [
@@ -259,7 +261,7 @@ async function _exportPDF(data, filename) {
             { header: 'Date Archived',  dataKey: 'date_archived'},
         ],
         body: data.map((e, i) => ({ no: i + 1, ...e })),
-        startY: 27,
+        startY: 27 + _d,
         styles: { fontSize: 8, cellPadding: 2.5, overflow: 'linebreak', lineColor: [0, 0, 0], lineWidth: 0.2, textColor: [0, 0, 0] },
         headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.2 },
         alternateRowStyles: { fillColor: [255, 255, 255] },

@@ -461,12 +461,14 @@ function _currPDFBlob(curricula) {
         if (cidx > 0) doc.addPage();
         // Plain black-on-white academic letterhead — no color banner, matching
         // the official PUP SIS curriculum printout look this export mirrors.
+        // Letterhead logo, centered (pdf_house_style.js); the header moves down below it.
+        const _d = (window.DSSPdf ? DSSPdf.logo(doc, 6) : 6) - 6;
         doc.setTextColor(0,0,0);
         doc.setFont('helvetica','normal'); doc.setFontSize(9);
-        doc.text('Polytechnic University of the Philippines', 10, 12);
+        doc.text('Polytechnic University of the Philippines', W/2, 12 + _d, { align:'center' });
         doc.setFont('helvetica','bold'); doc.setFontSize(14);
-        doc.text(`${(curr.program_name||'').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year||''})`, W/2, 21, { align:'center' });
-        let startY = 29;
+        doc.text(`${(curr.program_name||'').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year||''})`, W/2, 21 + _d, { align:'center' });
+        let startY = 29 + _d;
         curr.year_levels.forEach(yl => {
             yl.semesters.forEach(sem => {
                 if (startY > 184) { doc.addPage(); startY = 14; }
@@ -1720,6 +1722,15 @@ function _cmDdClose(except) {
     });
 }
 
+// Lower-case letters/digits only — "BS-IT", "bs it" and "BSIT" compare equal.
+function _cmDdNorm(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+// An option value that is a short code for a longer name (BSIT, CY2223) — not a sort key or "All".
+function _cmDdIsCode(value, text) {
+    const v = String(value || '').trim();
+    return !!v && v !== 'All' && /[A-Z]/.test(v) && v.length <= 15 &&
+           v.toLowerCase() !== String(text || '').trim().toLowerCase();
+}
+
 function _cmDdInit(wrap) {
     const sel = wrap.querySelector('select');
     if (!sel || wrap.dataset.cmDd) return;
@@ -1740,7 +1751,7 @@ function _cmDdInit(wrap) {
     menu.setAttribute('role', 'listbox');
     const withSearch = sel.options.length > 8;
     menu.innerHTML = (withSearch
-        ? '<div class="cm-dd-search"><i class="fas fa-magnifying-glass"></i><input type="text" placeholder="Search..."></div>'
+        ? '<div class="cm-dd-search"><i class="fas fa-magnifying-glass"></i><input type="text" placeholder="Search by name or code (e.g. BSIT)..."></div>'
         : '') + '<div class="cm-dd-list"></div><div class="cm-dd-empty" style="display:none;">No matches</div>';
     wrap.appendChild(menu);
     const list   = menu.querySelector('.cm-dd-list');
@@ -1754,15 +1765,33 @@ function _cmDdInit(wrap) {
             it.className = 'cm-dd-item' + (o.value === sel.value ? ' active' : '');
             it.setAttribute('role', 'option');
             it.dataset.value = o.value;
+            // data-code: the option's short code when its value is the full name.
+            const optCode = o.dataset.code || o.value;
+            it.dataset.code = optCode;
             it.innerHTML = '<span></span><i class="fas fa-check"></i>';
             it.firstChild.textContent = o.text;
+            // A short code behind a long name (Program: BSIT -> "Bachelor of Science in ...")
+            // is shown beside it, so the user can see what to type to find it.
+            if (_cmDdIsCode(optCode, o.text)) {
+                const code = document.createElement('small');
+                code.className = 'cm-dd-code';
+                code.textContent = optCode;
+                code.style.cssText = 'margin-left:8px;color:#999;font-weight:700;font-size:.7rem;letter-spacing:.3px;';
+                it.firstChild.appendChild(code);
+            }
             list.appendChild(it);
         });
     };
+    // Matches the name (every typed word) OR the code / abbreviation in the option's value
+    // (e.g. "bs", "bsit", "BS-IT" find "Bachelor of Science in Information Technology").
     const filter = q => {
+        const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+        const qCode = _cmDdNorm(q);
         let shown = 0;
         list.querySelectorAll('.cm-dd-item').forEach(it => {
-            const ok = !q || it.textContent.toLowerCase().includes(q);
+            const name = (it.firstChild?.firstChild?.textContent || it.textContent).toLowerCase();
+            const ok = !q || words.every(w => name.includes(w)) ||
+                       (qCode && _cmDdNorm(it.dataset.code || it.dataset.value).includes(qCode));
             it.style.display = ok ? '' : 'none';
             if (ok) shown++;
         });

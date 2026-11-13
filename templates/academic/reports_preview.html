@@ -105,6 +105,33 @@
     background: linear-gradient(135deg, #7a0100, #4b0a0a);
     letter-spacing: .6px; padding: 9px 10px;
 }
+/* Subject/Faculty Assignment — the official FACULTY ASSIGNMENT form (same as the
+   faculty account's Teaching Assignment PDF/Word): black ruled grids, maroon banner. */
+.ta-form { margin-bottom: 22px; }
+.ta-form .sis-logo-row { padding-top: 2px; }
+.ta-h1   { text-align: center; font-weight: 800; font-size: 1.15rem; color: #000; }
+.ta-hsub { text-align: center; font-weight: 700; font-size: .86rem; color: #000; margin-bottom: 4px; }
+.ta-campus {
+    text-align: center; font-weight: 700; font-size: .9rem; color: #fff; background: #7a0100;
+    border: 1px solid #000; padding: 6px 10px; margin: 4px 0 10px; letter-spacing: .4px;
+}
+.ta-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .72rem; color: #000; }
+.ta-grid th, .ta-grid td { border: 1px solid #000; padding: 3px 4px; vertical-align: middle; word-wrap: break-word; }
+.ta-grid th { font-weight: 700; text-align: center; font-size: .66rem; }
+.ta-grid td.c { text-align: center; }
+.ta-info th { background: #e6e6e6; text-align: left; font-size: .72rem; }
+.ta-scroll { overflow-x: auto; }
+.ta-load { min-width: 720px; }
+.ta-blank td { height: 19px; }
+.ta-days th.l { text-align: left; font-size: .72rem; }
+.ta-days .ta-tot td { font-weight: 700; }
+.ta-tall td, .ta-tall th.l { height: 32px; }
+.ta-sec   { font-weight: 700; font-size: .78rem; margin: 12px 0 3px; }
+.ta-sec-c { text-align: center; }
+.ta-total { font-weight: 700; font-size: .78rem; margin-top: 3px; }
+.ta-legend { font-weight: 700; font-size: .72rem; margin-top: 12px; }
+.ta-sign { text-align: right; font-size: .78rem; margin-top: 30px; }
+
 .sis-prog-hdr {
     background: #fff; color: #000; border: 1px solid #7a7a7a;
     padding: 8px 14px; font-size: .88rem; font-weight: 700; text-align: center;
@@ -173,10 +200,17 @@
 .sis-cal-table { width:100%; min-width:820px; border-collapse:collapse; table-layout:fixed; font-size:.68rem; }
 .sis-cal-table th { background:#2c0000; color:#fff; padding:6px 4px; font-size:.66rem; font-weight:800; text-align:center; border:1px solid rgba(255,255,255,.15); }
 .sis-cal-table th.cal-time-hdr { width:9%; }
-.sis-cal-table td { border:1px solid #f0e8e8; padding:2px; vertical-align:middle; text-align:center; }
+/* Every row is one fixed 30-minute slice (like the Excel/PDF export), so a class's height
+   matches its length and the time labels line up. Without a height, empty rows collapsed
+   to hairlines and rows with a class grew, which scrambled the timeline. */
+.sis-cal-table tbody tr { height:26px; }
+.sis-cal-table td { border:1px solid #f3ecec; padding:3px 5px; vertical-align:middle; text-align:center; }
+.sis-cal-table tbody tr.cal-slot-start > td { border-top:1px solid #d8c3c3; }
 .sis-cal-table td.cal-time-cell { font-weight:800; color:#630100; background:#fdf5f5; font-size:.64rem; white-space:nowrap; }
-.sis-cal-table tr.cal-gap-row td.cal-time-cell { background:#f5f5f5; }
-.sis-cal-table td.cal-class-cell { background:#fff0f0; font-weight:600; color:#2c0000; line-height:1.25; }
+.sis-cal-table tr.cal-gap-row td { background:#f7f7f7; }
+.sis-cal-table tr.cal-gap-row td.cal-time-cell { background:#f0f0f0; }
+.sis-cal-table td.cal-class-cell { background:#fff0f0; font-weight:600; color:#2c0000; line-height:1.3;
+                                   box-shadow:inset 3px 0 0 #a31515; border-color:#ead2d2; }
 .sis-cal-table td.cal-class-cell .cal-line { white-space:normal; word-break:break-word; }
 .sis-cal-table td.cal-empty-cell { background:#fff; }
 .sis-unscheduled { font-size:.76rem; color:#888; margin:6px 0 18px; padding:8px 12px; background:#fafafa; border-radius:6px; }
@@ -217,6 +251,19 @@
 .fmt-check { position: absolute; top: 12px; right: 12px; font-size: 1.1rem; color: #d0d0d0; transition: color 0.2s; }
 .exp-fmt-card.selected .fmt-check { color: #900000; }
 .fmt-icon { font-size: 1.8rem; margin-bottom: 8px; display: block; }
+.exp-orient-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 22px; }
+.exp-orient-card { display: flex; align-items: center; gap: 10px; border: 2px solid #eaeaea; border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff; transition: border-color .15s, background .15s; }
+.exp-orient-card:hover { border-color: #d0d0d0; }
+.exp-orient-card.selected { border-color: #900000; background: #fffcfc; }
+.exp-orient-card input { position: absolute; opacity: 0; pointer-events: none; }
+.exp-orient-card:focus-within { outline: 2px solid #900000; outline-offset: 2px; }
+.exp-orient-card b { display: block; font-size: .82rem; color: #222; }
+.exp-orient-card small { display: block; font-size: .68rem; color: #888; }
+.exp-orient-ico { width: 30px; display: flex; justify-content: center; color: #900000; }
+.exp-orient-page { display: inline-block; border: 2px solid #900000; border-radius: 2px; }
+.exp-orient-page.portrait  { width: 15px; height: 21px; }
+.exp-orient-page.landscape { width: 22px; height: 15px; }
+@media (max-width: 480px) { .exp-orient-row { grid-template-columns: 1fr; } }
 .exp-fmt-card h4 { margin: 0 0 2px; font-size: 0.9rem; font-weight: 700; color: #222; }
 .exp-fmt-card p { margin: 0; font-size: 0.75rem; color: #888; }
 
@@ -310,7 +357,7 @@
                         </thead>
                         <tbody>
                             {% for grow in yl.grid_rows %}
-                            <tr{% if grow.is_gap %} class="cal-gap-row"{% endif %}>
+                            <tr class="{% if grow.is_gap %}cal-gap-row{% endif %}{% if grow.slot_start %} cal-slot-start{% endif %}">
                                 {% for cell in grow.cells %}
                                     {% if cell.kind == 'time' %}
                                     <td class="cal-time-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}>{{ cell.text }}</td>
@@ -407,7 +454,7 @@
                         </thead>
                         <tbody>
                             {% for grow in room.grid_rows %}
-                            <tr{% if grow.is_gap %} class="cal-gap-row"{% endif %}>
+                            <tr class="{% if grow.is_gap %}cal-gap-row{% endif %}{% if grow.slot_start %} cal-slot-start{% endif %}">
                                 {% for cell in grow.cells %}
                                     {% if cell.kind == 'time' %}
                                     <td class="cal-time-cell"{% if cell.rowspan and cell.rowspan > 1 %} rowspan="{{ cell.rowspan }}"{% endif %}>{{ cell.text }}</td>
@@ -464,46 +511,61 @@
     {% endif %}
     </div>
 
-    <!-- ── SUBJECT / FACULTY ASSIGNMENT — Faculty Type → Faculty grouped layout,
-         mirroring _facsub_gen_xlsx/docx/pdf (faculty with no load still listed). ── -->
-    {% elif report_type == 'faculty_subject' and facsub_groups %}
-    <div class="sis-sheet">
-    {% for line in facsub_title_lines %}<div class="sis-title">{{ line }}</div>{% endfor %}
-    <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
-    {% for grp in facsub_groups %}
-        <div class="room-bldg-hdr">{{ grp.label }}</div>
-        <div class="rpt-table-wrapper">
-            <div class="rpt-table-scroll">
-                <table class="schedule-table">
-                    <colgroup>
-                        <col style="width:22%"><col style="width:12%"><col style="width:40%">
-                        <col style="width:16%"><col style="width:10%">
-                    </colgroup>
-                    <thead>
-                        <tr><th>Name</th><th>Subject Code</th><th>Subject Description</th><th>Course</th><th>Hours</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for fac in grp.faculty %}
-                            {% if fac.cells %}
-                                {% for row in fac.cells %}
-                                <tr>
-                                    {% if loop.first %}<td class="td-desc" rowspan="{{ fac.cells|length }}">{{ fac.name }}</td>{% endif %}
-                                    <td class="td-code">{{ row[0] }}</td>
-                                    <td class="td-desc">{{ row[1] }}</td>
-                                    <td>{{ row[2] }}</td>
-                                    <td>{{ row[3] }}</td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr><td class="td-desc">{{ fac.name }}</td><td></td><td></td><td></td><td></td></tr>
-                            {% endif %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    <!-- ── SUBJECT / FACULTY ASSIGNMENT — one official FACULTY ASSIGNMENT form per
+         faculty, the same form as the faculty account's Teaching Assignment export
+         (teaching_assignment_export.py), built by _facsub_form_view. ── -->
+    {% elif report_type == 'faculty_subject' and facsub_forms %}
+    {% for f in facsub_forms %}
+    <div class="sis-sheet ta-form">
+        <div class="sis-logo-row"><img src="{{ url_for('static', filename='img/pup-logo.png') }}" alt="PUP Lopez Campus"></div>
+        <div class="ta-h1">{{ f.title_lines[0] }}</div>
+        {% for line in f.title_lines[1:] %}<div class="ta-hsub">{{ line }}</div>{% endfor %}
+        <div class="ta-campus">{{ f.campus }}</div>
+        <table class="ta-grid ta-info">
+            <colgroup><col style="width:13%"><col style="width:37%"><col style="width:13%"><col style="width:37%"></colgroup>
+            {% for a, b, c, e in f.info %}
+            <tr><th>{{ a }}</th><td>{{ b }}</td><th>{{ c }}</th><td>{{ e }}</td></tr>
+            {% endfor %}
+        </table>
+        {% for sec in f.sections %}
+        <div class="ta-sec">{{ sec.title }}</div>
+        <div class="ta-scroll">
+        <table class="ta-grid ta-load">
+            <colgroup>
+                <col style="width:9.4%"><col style="width:21.2%"><col style="width:5.1%"><col style="width:11%">
+                <col style="width:5.1%"><col style="width:18.5%"><col style="width:6.2%"><col style="width:6.5%">
+                <col style="width:7.5%"><col style="width:9.5%">
+            </colgroup>
+            <thead><tr>{% for h in f.headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in sec.rows %}
+                <tr>{% for v in row %}<td class="{{ 'c' if loop.index0 in f.center else '' }}">{{ v }}</td>{% endfor %}</tr>
+            {% endfor %}
+            {% for _ in range(sec.blank) %}
+                <tr class="ta-blank">{% for h in f.headers %}<td></td>{% endfor %}</tr>
+            {% endfor %}
+            </tbody>
+        </table>
         </div>
-    {% endfor %}
+        <div class="ta-total">{{ sec.total_label }}&nbsp;&nbsp;&nbsp;{{ sec.total }}</div>
+        {% endfor %}
+        {% if f.ts %}<div class="ta-total">{{ f.ts[0] }}&nbsp;&nbsp;&nbsp;{{ f.ts[1] }}</div>{% endif %}
+        {% for gtitle, grows, gcls in [('TEACHING LOAD PER DAY (HOURS)', f.per_day, ''), ('OFFICIAL TIME / ADVISING TIME', f.official, 'ta-tall')] %}
+        <div class="ta-sec ta-sec-c">{{ gtitle }}</div>
+        <table class="ta-grid ta-days {{ gcls }}">
+            <colgroup><col style="width:16%">{% for h in f.day_headers %}<col style="width:12%">{% endfor %}</colgroup>
+            <thead><tr><th></th>{% for h in f.day_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in grows %}
+                <tr class="{{ 'ta-tot' if row[0] == 'TOTAL' else '' }}"><th class="l">{{ row[0] }}</th>{% for v in row[1:] %}<td class="c">{{ v }}</td>{% endfor %}</tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endfor %}
+        <div class="ta-legend">{{ f.legend }}</div>
+        <div class="ta-sign"><div>______________________________</div><div><i>Signature over Printed Name</i></div></div>
     </div>
+    {% endfor %}
 
     <!-- ── GROUPED SECTIONS (assignments, offerings) ── -->
     {% elif sections %}
@@ -780,6 +842,25 @@
                 </div>
             </div>
 
+            <!-- PDF / Word page orientation — preselected to the report's usual page -->
+            <div id="rptExpOrientBox" style="display:none;">
+                <div class="exp-sec-hdr">
+                    <span class="exp-sec-title">PAGE ORIENTATION <span style="font-weight:600;color:#999;letter-spacing:0;">(PDF &amp; Word)</span></span>
+                </div>
+                <div class="exp-orient-row" role="radiogroup" aria-label="Page orientation">
+                    <label class="exp-orient-card">
+                        <input type="radio" name="rptExpOrient" value="portrait" onchange="_rptOrientChanged()">
+                        <span class="exp-orient-ico"><span class="exp-orient-page portrait"></span></span>
+                        <span><b>Portrait</b><small>Tall page</small></span>
+                    </label>
+                    <label class="exp-orient-card">
+                        <input type="radio" name="rptExpOrient" value="landscape" onchange="_rptOrientChanged()">
+                        <span class="exp-orient-ico"><span class="exp-orient-page landscape"></span></span>
+                        <span><b>Landscape</b><small>Wide page</small></span>
+                    </label>
+                </div>
+            </div>
+
             <div class="exp-sec-hdr">
                 <span class="exp-sec-title">EXPORT FILENAME</span>
             </div>
@@ -866,6 +947,24 @@ function toggleAllFormats() {
 
 function _validateExportBtn() {
     document.getElementById('rptExpConfirmBtn').disabled = _rptSelFmts.size === 0;
+    // Orientation only matters for PDF / Word.
+    const box = document.getElementById('rptExpOrientBox');
+    if (box) box.style.display = (_rptSelFmts.has('pdf') || _rptSelFmts.has('docx')) ? '' : 'none';
+}
+
+// The page each report is laid out for — preselected; the user can switch it.
+const RPT_NATURAL_ORIENT = ({
+    class_schedule: 'portrait', room_schedule: 'landscape', faculty_subject: 'portrait',
+    faculty: 'landscape', curriculum: 'landscape', rooms: 'portrait',
+})[RPT_TYPE] || 'landscape';
+(function _rptInitOrient() {
+    const r = document.querySelector(`input[name="rptExpOrient"][value="${RPT_NATURAL_ORIENT}"]`);
+    if (r) { r.checked = true; _rptOrientChanged(); }
+})();
+
+function _rptOrientChanged() {
+    document.querySelectorAll('.exp-orient-card').forEach(c =>
+        c.classList.toggle('selected', c.querySelector('input').checked));
 }
 
 async function doExport() {
@@ -889,7 +988,8 @@ async function doExport() {
         const resp = await fetch(RPT_EXPORT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName })
+            body: JSON.stringify({ ...RPT_PARAMS, formats, filename: baseName,
+                orientation: document.querySelector('input[name="rptExpOrient"]:checked')?.value || RPT_NATURAL_ORIENT })
         });
 
         if (!resp.ok) {

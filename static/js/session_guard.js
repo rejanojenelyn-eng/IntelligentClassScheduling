@@ -21,6 +21,8 @@
     var me = document.currentScript;
     var pageId = (me && me.getAttribute('data-page'))
         || Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    // csrf.js sends it as X-Page-Id: tells the live schedule updates which page made a change.
+    window.DSS_PAGE_ID = pageId;
     var active = false;
 
     // ── 4. Account changed in another tab ────────────────────────────────────────
@@ -139,6 +141,7 @@
     window.addEventListener('pageshow', function (e) {
         if (!e.persisted) return;
         pageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        window.DSS_PAGE_ID = pageId;
         fetch('/api/session/heartbeat', {
             method: 'POST',
             credentials: 'same-origin',

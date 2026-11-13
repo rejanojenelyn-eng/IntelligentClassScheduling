@@ -1740,17 +1740,21 @@ async function exportLogs() {
       f.user ? `User: ${userSel?.options[userSel.selectedIndex]?.text || f.user}` : '',
     ].filter(Boolean).join('   |   ') || 'All users, all categories';
 
+    // Letterhead: logo centered on top (pdf_house_style.js), the title lines centered below.
+    const _d = (window.DSSPdf ? DSSPdf.logo(doc, 6) : 6) - 6;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(128, 0, 0);
-    doc.text('PUPLC Scheduling System - Activity Logs', 10, 14);
+    doc.text('PUPLC Scheduling System - Activity Logs', W / 2, 14 + _d, { align: 'center' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(60, 60, 60);
     doc.text(`Generated: ${now.toLocaleString()}   |   ${data.rows.length} entr${data.rows.length === 1 ? 'y' : 'ies'}   |   ` +
-             `${f.order === 'asc' ? 'Oldest first' : 'Most recent first'}`, 10, 20);
-    doc.text(doc.splitTextToSize(`Filters: ${scope}`, W - 20), 10, 25);
+             `${f.order === 'asc' ? 'Oldest first' : 'Most recent first'}`, W / 2, 21 + _d, { align: 'center' });
+    const _filterLines = doc.splitTextToSize(`Filters: ${scope}`, W - 20);
+    doc.text(_filterLines, W / 2, 27 + _d, { align: 'center' });
+    const _tableTop = 27 + _d + _filterLines.length * 5 + 2;
 
     // jsPDF's built-in font has no em dash / middle dot; keep the PDF text plain.
     const plain = t => String(t == null ? '' : t).replace(/[—–]/g, '-').replace(/·/g, '|');
     doc.autoTable({
-      startY: 30,
+      startY: _tableTop,
       head: [['Timestamp', 'Action / Transaction', 'Log Content / Details', 'Initiated By', 'Role', 'Category']],
       body: data.rows.map(l => [
         l.logtime || '', plain(l.action), plain(l.details || '-'),

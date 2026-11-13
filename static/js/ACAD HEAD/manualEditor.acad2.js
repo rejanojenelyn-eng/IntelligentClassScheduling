@@ -1032,7 +1032,7 @@ function switchMode(mode) {
     if (isByProg) {
         renderProgramTimetable();
     } else {
-        const roomId = document.getElementById('sel_room').value;
+        const roomId = _viewedRoomId();
         renderGrid(roomId, formAyFilter(), formSemFilter());
     }
 }
@@ -1231,6 +1231,13 @@ function _setTableRows(mode, sessions) {
     if (window._calView === 'table') setTimeout(_renderSessionTable, 0);
 }
 
+// The room the Room View calendar is showing. The room dropdown above the calendar only
+// *views* a room (it doesn't change the form's room), so redraws — the Calendar View
+// button, saves, live refreshes — must reuse the room on screen, not #sel_room.
+function _viewedRoomId() {
+    return window._gridRoomId || document.getElementById('sel_room')?.value || '';
+}
+
 function _setCalView(view, opts = {}) {
     view = view === 'table' ? 'table' : 'calendar';
     window._calView = view;
@@ -1245,7 +1252,7 @@ function _setCalView(view, opts = {}) {
     else if (!opts.keep) {
         // Back to the calendar: redraw so every pill is placed against the visible grid.
         if (currentMode === 'program') renderProgramTimetable();
-        else renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+        else renderGrid(_viewedRoomId(), formAyFilter(), formSemFilter());
     }
 }
 
@@ -2629,7 +2636,7 @@ async function _dropSessionImpl(sessDataEncoded) {
         if (typeof _syncSubjectCardBars === 'function') _syncSubjectCardBars();
     }
 
-    const currentRoom = document.getElementById('sel_room').value;
+    const currentRoom = _viewedRoomId();
     if (currentMode === 'program') renderProgramTimetable();
     else renderGrid(currentRoom, formAyFilter(), formSemFilter());
 
@@ -2772,7 +2779,7 @@ async function _afterPublishedDelete(sd) {
     }
     if (typeof _updateSubjectList === 'function') await _updateSubjectList();
     if (currentMode === 'program') renderProgramTimetable();
-    else renderGrid(document.getElementById('sel_room').value, ay, sem);
+    else renderGrid(_viewedRoomId(), ay, sem);
     if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
     _refreshCurrentFacUnitDisplay();
     await showValidationModal('Schedule Deleted',
@@ -2816,7 +2823,7 @@ window.dropLocalClass = function(tempId, event) {
         } catch(e) {}
     });
 
-    const _dlcRoom = document.getElementById('sel_room').value;
+    const _dlcRoom = _viewedRoomId();
     if (currentMode === 'program') {
         renderProgramTimetable();
     } else {
@@ -2951,7 +2958,7 @@ function _restoreApproveState(snap) {
         if (currentMode === 'program') {
             if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
         } else if (typeof renderGrid === 'function') {
-            renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+            renderGrid(_viewedRoomId(), formAyFilter(), formSemFilter());
         }
     } catch (e) { /* repaint is best-effort; state is already restored */ }
 }
@@ -3541,7 +3548,7 @@ window._runManualApproveImpl = async function(opts = {}) {
                 window._postPublishPanelReady = _panelReady;
                 const _restReady = _panelReady.then(async () => {
                     if (typeof _updateSubjectList === 'function') await _updateSubjectList();
-                    if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(document.getElementById('sel_room').value, ay, sem); }
+                    if (currentMode === 'program') { renderProgramTimetable(); } else { renderGrid(_viewedRoomId(), ay, sem); }
                     // Rebuild FL dropdown (newly published faculty now confirmed) and refresh if visible
                     if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
                     if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
@@ -3617,6 +3624,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
         return;
     }
     const gridToken = ++_gridRenderToken;
+    if (roomId) window._gridRoomId = String(roomId);   // see _viewedRoomId()
 
     const wrapper = document.getElementById('gridWrapper');
     const table = document.getElementById('mainTimetable');
@@ -3965,6 +3973,12 @@ function filterByBuilding(bldgId, btnElement) {
             renderGrid('', formAyFilter(), formSemFilter());
         }
     }
+    // The room being viewed (dropdown above the calendar) left this building too: stop showing it.
+    const viewed = allRooms.find(r => String(r.id) === String(window._gridRoomId || ''));
+    if (viewed && bldgId !== 'ALL' && String(viewed.bldg_id) !== String(bldgId)) {
+        window._gridRoomId = '';
+        renderGrid('', formAyFilter(), formSemFilter());
+    }
 
     renderRooms();
 }
@@ -4132,7 +4146,7 @@ async function triggerCascade(skipGridRender = false) {
         if (currentMode === 'program') {
             renderProgramTimetable();
         } else {
-            const currentRoomId = document.getElementById('sel_room').value;
+            const currentRoomId = _viewedRoomId();
             renderGrid(currentRoomId, ay, sem);
         }
     }

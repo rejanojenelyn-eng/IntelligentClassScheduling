@@ -220,7 +220,7 @@
                 </div>
                 <div class="rpt-cb-group">
                     <div class="rpt-cb-group-title">Specialization — leave empty for all</div>
-                    <div class="rpt-cb-list">
+                    <div class="rpt-cb-list" data-multi-dd="All specializations">
                         {% for s in specializations %}
                         <label class="rpt-cb-item"><input type="checkbox" class="fac-sp-cb" value="{{ s.specializationid }}"> {{ s.specializationname }}</label>
                         {% endfor %}
@@ -228,7 +228,7 @@
                 </div>
                 <div class="rpt-cb-group">
                     <div class="rpt-cb-group-title">Designation — leave empty for all</div>
-                    <div class="rpt-cb-list">
+                    <div class="rpt-cb-list" data-multi-dd="All designations">
                         {% for d in designations %}
                         <label class="rpt-cb-item"><input type="checkbox" class="fac-dg-cb" value="{{ d.designationid }}"> {{ d.designationname }}</label>
                         {% endfor %}
@@ -241,7 +241,7 @@
             <div id="sectionClassSchedule" class="hidden">
                 <div class="rpt-cb-group">
                     <div class="rpt-cb-group-title">Academic Year — select at least one</div>
-                    <div class="rpt-cb-list">
+                    <div class="rpt-cb-list" data-multi-dd="Select academic year(s)">
                         {% for ay in ay_list %}
                         <label class="rpt-cb-item"><input type="checkbox" class="cs-ay-cb" value="{{ ay.academicyearid }}"> A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</label>
                         {% endfor %}
@@ -257,9 +257,9 @@
                 </div>
                 <div class="rpt-cb-group">
                     <div class="rpt-cb-group-title">Program — leave empty for all</div>
-                    <div class="rpt-cb-list">
+                    <div class="rpt-cb-list" data-multi-dd="All programs">
                         {% for p in programs %}
-                        <label class="rpt-cb-item"><input type="checkbox" class="cs-prog-cb" value="{{ p.programcode }}"> {{ p.programname }}</label>
+                        <label class="rpt-cb-item" data-code="{{ p.programcode }}" data-label="{{ p.programname }}"><input type="checkbox" class="cs-prog-cb" value="{{ p.programcode }}"> {{ p.programname }} <small style="color:#999;font-weight:700;font-size:.68rem;margin-left:4px;">{{ p.programcode }}</small></label>
                         {% endfor %}
                     </div>
                 </div>
@@ -306,7 +306,7 @@
             <div id="sectionRoomSchedule" class="hidden">
                 <div class="rpt-cb-group">
                     <div class="rpt-cb-group-title">Academic Year — select at least one</div>
-                    <div class="rpt-cb-list">
+                    <div class="rpt-cb-list" data-multi-dd="Select academic year(s)">
                         {% for ay in ay_list %}
                         <label class="rpt-cb-item"><input type="checkbox" class="rs-ay-cb" value="{{ ay.academicyearid }}"> A.Y. {{ ay.yearstart }}-{{ ay.yearend }}</label>
                         {% endfor %}
@@ -520,7 +520,7 @@
             <div class="emp-export-section-header">
                 <span class="emp-export-section-title">Academic Year</span>
             </div>
-            <div class="emp-cb-list" id="facSubAyList">
+            <div class="emp-cb-list" id="facSubAyList" data-multi-dd="Select academic year(s)">
                 {% for ay in ay_list %}
                 <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
                     <input type="checkbox" class="fse-ay-cb" value="{{ ay.academicyearid }}" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
@@ -970,6 +970,7 @@
         document.getElementById('sectionAssignment').classList.add('hidden');
         document.getElementById('sectionFacultyList').classList.add('hidden');
         document.querySelectorAll('#sectionFacultyList input[type=checkbox]').forEach(cb => cb.checked = false);
+        if (window.MultiDD) MultiDD.refreshAll();   // dropdown labels follow the reset
 
 
         // Mapping report types to visible filters
@@ -1177,6 +1178,7 @@
         document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
         document.getElementById('facSubConfirmBtn').disabled = true;
         document.getElementById('facSubTypeAllBtn').textContent = 'All';
+        if (window.MultiDD) MultiDD.refreshAll();
         document.getElementById('facSubExportModal').style.display = 'flex';
     }
     function closeFacSubExportModal() {
@@ -1261,5 +1263,10 @@
         f.faculty_types.forEach(v => params.append('faculty_types', v));
         window.location.href = `/reports/preview/faculty_subject?${params.toString()}`;
     }
+</script>
+<script src="{{ url_for('static', filename='js/multi_dropdown.js') }}"></script>
+<script>
+    // Long checkbox lists (Academic Year, Program, Specialization, Designation) -> dropdowns.
+    if (window.MultiDD) MultiDD.initAll(document);
 </script>
 {% endblock %}

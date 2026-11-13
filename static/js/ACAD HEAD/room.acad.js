@@ -591,8 +591,10 @@ async function _roomExportXLSX(buildings,filename){
 }
 async function _roomExportPDF(buildings,filename){
     const{jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-    const W=210,M=10,CW=190,HDR_H=24,PAGE_H=297,now=new Date().toLocaleString();
-    function drawBanner(){doc.setTextColor(0,0,0);doc.setFont('helvetica','bold');doc.setFontSize(13);doc.text('PUP LOPEZ CAMPUS',W/2,11,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text('ROOMS AND BUILDINGS',W/2,18,{align:'center'});doc.setFontSize(7.5);doc.text('Generated: '+now,W/2,24,{align:'center'});}
+    // Letterhead logo, centered on every page's banner (pdf_house_style.js); _d = its height.
+    const _d=window.DSSPdf?DSSPdf.logoSpace():0;
+    const W=210,M=10,CW=190,HDR_H=24+_d,PAGE_H=297,now=new Date().toLocaleString();
+    function drawBanner(){if(_d)DSSPdf.logo(doc,6);doc.setTextColor(0,0,0);doc.setFont('helvetica','bold');doc.setFontSize(13);doc.text('PUP LOPEZ CAMPUS',W/2,11+_d,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text('ROOMS AND BUILDINGS',W/2,18+_d,{align:'center'});doc.setFontSize(7.5);doc.text('Generated: '+now,W/2,24+_d,{align:'center'});}
     drawBanner();let y=HDR_H+5;
     buildings.forEach((bldg,idx)=>{
         const rooms=bldg.rooms||[];const minNeeded=8+9+Math.min(rooms.length,3)*8+8+5;

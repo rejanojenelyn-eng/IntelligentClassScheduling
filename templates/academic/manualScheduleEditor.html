@@ -96,13 +96,24 @@
         margin-top: 6px; width: 100%; padding: 6px 10px;
         background: #2980b9; color: white; border: none; border-radius: 4px;
         font-size: 0.74rem; font-weight: 700; cursor: pointer;
-        letter-spacing: 0.4px; text-align: center; transition: background 0.18s;
+        letter-spacing: 0.4px; text-align: center;
+        transition: background 0.18s, transform 0.12s, box-shadow 0.18s, filter 0.18s;
     }
     .btn-assign-faculty:hover { background: #1f6fa0; }
     .btn-assign-faculty.assigned { background: #27ae60; }
     .btn-assign-faculty.assigned:hover { background: #1e9152; }
     .btn-assign-faculty.reassign { background: #7f8c8d; }
-    .btn-assign-faculty.reassign:hover { background: #6c7a7d; }
+    .btn-assign-faculty.reassign:hover { background: #5d6d70; }
+    /* Clear hover for every state (Assign / Reassign / TBA): lift + shadow; press-down on click.
+       Works for the inline-gradient TBA button too (filter instead of a new background). */
+    .btn-assign-faculty:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, .22);
+        filter: brightness(1.06);
+    }
+    .btn-assign-faculty:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 3px rgba(0, 0, 0, .2); }
+    .btn-assign-faculty:focus-visible { outline: 2px solid #1f6fa0; outline-offset: 2px; }
+    .btn-assign-faculty:disabled { opacity: .75; cursor: default; }
 
     /* ── Calendar / Table view toggle (Room View + Program View) ── */
     .cv-toggle-bar { display:flex; align-items:center; gap:8px; padding:8px 16px; background:#fff;
@@ -591,6 +602,11 @@
     }
 
 
+    /* Compact rows: 30-min slot = 36px (was 55px) so the 7:30 AM–9 PM day needs far less
+       scrolling. Pills are positioned from the measured row height, so they follow. */
+    #mainTimetable tbody td, #flTimetable tbody td { height: 36px; }
+    #mainTimetable tbody td.time-col, #flTimetable tbody td.time-col { font-size: .68rem; }
+
     .local-mode .timetable thead th {
         background-color: #ff934e !important;
         color: white !important;
@@ -1067,7 +1083,7 @@
                 <div class="mnav-left-tools">
                     <i class="fas fa-undo mnav-icon" id="mnavUndoIcon" title="Undo"></i>
                     <i class="fas fa-redo mnav-icon" id="mnavRedoIcon" title="Redo"></i>
-                    <i class="fas fa-sync-alt mnav-icon" title="Refresh" onclick="_guardedReload()"></i>
+                    <i class="fas fa-sync-alt mnav-icon" title="Refresh — load the latest saved schedules (your selections and unsaved changes stay)" onclick="_refreshEditorInPlace(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();_refreshEditorInPlace(this);}"></i>
                 </div>
                 <div class="manual-nav-tabs">
                     <a href="#" class="mnav-tab mnav-active" id="tab-room" onclick="switchEditorTab('room',this);return false;">ROOM VIEW</a>
@@ -1580,7 +1596,8 @@
                     <button class="btn-save-outlined" id="btnSaveDraftRight" onclick="confirmAllSlots()">
                         SAVE AS DRAFT
                     </button>
-                    <button class="btn-save-outlined btn-approve" id="btnApproveSchedule" onclick="approveSchedule()">
+                    <button class="btn-save-outlined btn-approve" id="btnApproveSchedule" onclick="approveSchedule()"
+                            title="Publish this subject's schedule. Published schedules become the official (live) schedule that faculty and students see.">
                         APPROVE SCHEDULE
                     </button>
                 {% endif %}
@@ -3546,6 +3563,105 @@ async function _onCurriculumModeChange(mode) {
     if (typeof _updateSubjectList === 'function') _updateSubjectList().catch(() => {});
 }
 
+/* ── Live updates from other devices / tabs (static/js/live_updates.js) ──
+   Another device saved, published or deleted schedules: refresh in place instead of
+   needing a reload. The calendar and subject list always refresh (they keep this page's
+   own unsaved entries — renderGrid merges pendingManualSchedule over the database), and
+   the occupancy caches are dropped so conflict checks see the other device's bookings.
+   The open subject's Time Slices are reloaded only when nothing here is unsaved, so
+   in-progress work is never overwritten. */
+window.DSS_LIVE_SCHEDULE = true;
+let _liveRefreshPending = null;
+window.addEventListener('dss:schedule-changed', e => {
+    e.preventDefault();                       // handled here — no "Refresh" banner
+    _liveRefreshPending = e.detail || {};
+    _runLiveRefresh();
+});
+async function _runLiveRefresh() {
+    const d = _liveRefreshPending;
+    if (!d) return;
+    // Busy (publishing, dragging a pill, a save in flight): try again shortly.
+    if (_editorBusy()) { setTimeout(_runLiveRefresh, 1500); return; }
+    _liveRefreshPending = null;
+    const r = await _refreshEditorData();
+    if (r && window.DSSLive) window.DSSLive.toast(
+        `Updated — ${window.DSSLive.describe(d)}.` + (r.unsaved ? ' Your unsaved changes were kept.' : ''));
+}
+
+function _editorBusy() {
+    return !!(window._approveInFlight || window._dndBusy ||
+              document.getElementById('btnSaveDraftRight')?.disabled);
+}
+
+// Reload what is on screen from the database WITHOUT leaving the page: the Academic Year,
+// Semester, Program, Year Level, Section, Subject, room and view all stay as they are.
+// Shared by the toolbar's Refresh button and the live updates. The open subject's Time
+// Slices are reloaded only when nothing here is unsaved — unsaved work is never lost.
+// Returns {unsaved} or null when there is nothing to refresh yet.
+async function _refreshEditorData() {
+    const ay  = document.getElementById('sel_ay')?.value  || '';
+    const sem = document.getElementById('sel_sem')?.value || '';
+    if (!ay || !sem) return null;
+    const unsaved = typeof hasUnsavedChanges === 'function' && hasUnsavedChanges();
+    try {
+        if (typeof _invalidateOccupancyCaches === 'function') _invalidateOccupancyCaches(ay, sem);
+        if (typeof window._invalidateRecBusyCache === 'function') window._invalidateRecBusyCache();
+        window._roomsByDayCache = {};
+        const subj = document.getElementById('sel_subj')?.value || '';
+        const sect = document.getElementById('sel_section')?.value || '';
+        if (subj && sect && !unsaved) {
+            const prog = document.getElementById('sel_prog')?.value || '';
+            const yl   = document.getElementById('sel_year')?.value || '';
+            const r = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(subj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&section_id=${encodeURIComponent(sect)}`);
+            const x = await r.json();
+            // Still the same subject, and still nothing unsaved (the user may have typed meanwhile).
+            if (document.getElementById('sel_subj')?.value === subj &&
+                !(typeof hasUnsavedChanges === 'function' && hasUnsavedChanges())) {
+                if (x.success && x.sessions && x.sessions.length) {
+                    await _loadExistingSessionsIntoSlices(x.sessions);
+                } else if (x.success) {
+                    document.getElementById('time-slots-container').innerHTML = '';
+                    addNewTimeSlot('', '', '', '', '', true);
+                }
+            }
+        }
+        if (typeof _updateSubjectList === 'function') await _updateSubjectList();
+        if (currentMode === 'program') renderProgramTimetable();
+        else renderGrid(_viewedRoomId(), ay, sem);
+        if (typeof _initFlFacultyMenu === 'function') await _initFlFacultyMenu();
+        if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
+        const _dl = document.getElementById('draftListPanel');
+        if (_dl && _dl.style.display !== 'none' && typeof _loadDraftListPanel === 'function') _loadDraftListPanel();
+        const _vh = document.getElementById('versionHistoryPanel');
+        if (_vh && _vh.style.display !== 'none' && typeof _loadVersionHistoryPanel === 'function') _loadVersionHistoryPanel();
+    } catch (err) {
+        console.warn('[refresh] failed', err);
+        throw err;
+    }
+    return { unsaved };
+}
+
+// Toolbar Refresh (the ⟳ icon): update in place instead of reloading the whole page,
+// which used to clear every selection and force the user to pick everything again.
+async function _refreshEditorInPlace(iconEl) {
+    if (_editorBusy()) {
+        await showValidationModal('Please Wait', 'A save or publish is still in progress. Refresh again in a moment.');
+        return;
+    }
+    if (iconEl) { if (iconEl.dataset.busy) return; iconEl.dataset.busy = '1'; iconEl.classList.add('fa-spin'); }
+    try {
+        const r = await _refreshEditorData();
+        if (window.DSSLive) window.DSSLive.toast(!r
+            ? 'Select an Academic Year and Semester first.'
+            : 'Refreshed — showing the latest saved schedules.' +
+              (r.unsaved ? ' Your unsaved changes were kept.' : ''));
+    } catch (e) {
+        await showValidationModal('Refresh Failed', 'Could not load the latest schedules. Check your connection and try again.');
+    } finally {
+        if (iconEl) { iconEl.classList.remove('fa-spin'); delete iconEl.dataset.busy; }
+    }
+}
+
 /* ── Section open/close helpers ── */
 function _collapseSection(bodyId, caretId) {
     const b = document.getElementById(bodyId);
@@ -4058,9 +4174,9 @@ let _subjClickToken = 0;
 
 async function _onSubjectClick(code, name, units, hours) {
     const _myClickToken = ++_subjClickToken;
-    // Right after a Publish the open subject's slices are still being reloaded as Published.
-    // Wait for that (usually already done) so the just-published slices are not mistaken
-    // for unsaved changes below.
+    // Right after a Save as Draft or a Publish the open subject's slices are still being
+    // reloaded from the database. Wait for that (usually already done) so the just-saved
+    // slices are not mistaken for unsaved changes below.
     if (window._postPublishPanelReady) {
         try { await window._postPublishPanelReady; } catch (e) {}
         if (_myClickToken !== _subjClickToken) return;
@@ -4446,7 +4562,7 @@ async function _onSubjectClick(code, name, units, hours) {
             // Truly empty: no sessions loaded and no existing slices — full block.
             _localSetBlockPanel(true);
             // Still refresh calendar so Official pills (from other contexts) render correctly
-            const _blkRoom = document.getElementById('sel_room')?.value;
+            const _blkRoom = _viewedRoomId();
             const _blkAy   = document.getElementById('sel_ay').value;
             const _blkSem  = document.getElementById('sel_sem').value;
             if (typeof renderGrid === 'function' && _blkRoom && _blkAy && _blkSem) {
@@ -4468,7 +4584,7 @@ async function _onSubjectClick(code, name, units, hours) {
     // _loadExistingSessionsIntoSlices already calls renderGrid when sessions exist;
     // this covers the case where the new subject has no existing sessions.
     if (!_hasExistingSchedule) {
-        const _subSwRoom = document.getElementById('sel_room')?.value;
+        const _subSwRoom = _viewedRoomId();
         const _subSwAy   = document.getElementById('sel_ay').value;
         const _subSwSem  = document.getElementById('sel_sem').value;
         if (typeof renderGrid === 'function' && _subSwRoom && _subSwAy && _subSwSem) {
@@ -4836,6 +4952,7 @@ function _updateAssignFacultyBtn() {
         btn.dataset.action = 'reassign-wait';
         btn.disabled       = true;
         btn.innerHTML      = '<i class="fas fa-hand-pointer"></i> Pick the new faculty from the list';
+        btn.title          = 'Choose the new faculty from the list above — it is saved as soon as you pick one.';
         if (facWrapper) facWrapper.style.display = 'block';
         if (btnTBA) { btnTBA.style.display = 'block'; btnTBA.innerHTML = '<i class="fas fa-question-circle"></i> Assign as TBA'; }
         return;
@@ -4851,6 +4968,7 @@ function _updateAssignFacultyBtn() {
         btn.dataset.action = 'reassign-locked';
         btn.classList.add('reassign');
         btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
+        btn.title = 'This subject already has a schedule with this faculty. Click to change the faculty (you will be asked to confirm).';
         return;
     }
 
@@ -4876,6 +4994,7 @@ function _updateAssignFacultyBtn() {
         btn.dataset.action = 'reassign-soft';
         btn.classList.add('reassign');
         btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
+        btn.title = 'This faculty is assigned to the subject. Click to pick a different faculty.';
         if (facWrapper) facWrapper.style.display = 'none';
         return;
     }
@@ -4886,6 +5005,9 @@ function _updateAssignFacultyBtn() {
         btn.innerHTML     = stored
             ? '<i class="fas fa-user-check"></i> Confirm Re-Assignment'
             : '<i class="fas fa-user-check"></i> Assign Faculty';
+        btn.title = stored
+            ? "Replace the subject's current faculty with the one selected above."
+            : 'Confirm the selected faculty for this subject. Its time slices will be scheduled under this faculty.';
         if (facWrapper) facWrapper.style.display = 'block';
         // Also show TBA option when a real faculty is selected but not yet confirmed
         if (btnTBA && !stored) {
@@ -4939,7 +5061,7 @@ function _syncSubjectFacultyToCalendar(code, facId, facName) {
     if (typeof currentMode !== 'undefined' && currentMode === 'program') {
         if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
     } else if (typeof renderGrid === 'function') {
-        renderGrid(document.getElementById('sel_room').value, ay, sem);
+        renderGrid(_viewedRoomId(), ay, sem);
     }
 }
 
@@ -5659,7 +5781,7 @@ window.filterByBuilding = function(bldgId, btn) {
     _origFilterByBuilding(bldgId, btn);
     _rebuildRoomHdrDropdown(bldgId);
     // Refresh the room calendar so the current room's schedule is re-displayed after switching buildings
-    const _fbRoom = document.getElementById('sel_room')?.value;
+    const _fbRoom = _viewedRoomId();
     const _fbAy   = document.getElementById('sel_ay').value;
     const _fbSem  = document.getElementById('sel_sem').value;
     if (typeof renderGrid === 'function' && _fbRoom && _fbAy && _fbSem) {
@@ -6589,7 +6711,7 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
 
     // Refresh the room calendar so the user sees the current room state when adding a new slice
     if (!existingJson) {
-        const _addRm  = document.getElementById('sel_room')?.value;
+        const _addRm  = _viewedRoomId();
         const _addAy  = document.getElementById('sel_ay').value;
         const _addSem = document.getElementById('sel_sem').value;
         if (typeof renderGrid === 'function' && _addRm && _addAy && _addSem) {
@@ -6907,7 +7029,7 @@ async function removeTimeSlot(id) {
     if (typeof currentMode !== 'undefined' && currentMode === 'program') {
         if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
     } else if (typeof renderGrid === 'function') {
-        renderGrid(document.getElementById('sel_room').value, ay, sem);
+        renderGrid(_viewedRoomId(), ay, sem);
     }
 
     // Room-occupancy cache (window._roomDbCache) drives the Add Schedule panel's conflict
@@ -7809,7 +7931,7 @@ async function selectBcSect(id, name) {
     if (currentMode === 'program') {
         renderProgramTimetable();
     } else {
-        const _room = document.getElementById('sel_room')?.value || '';
+        const _room = _viewedRoomId();
         renderGrid(_room, _ay, _sem);
     }
 }
@@ -8165,9 +8287,12 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const savedMsg = newSliceCount > 0
                 ? `${newSliceCount} new session${newSliceCount !== 1 ? 's' : ''} saved to draft.`
                 : 'Draft updated successfully.';
-            // A faculty reassignment explains itself once, after the status is settled below.
-            if (!_reassign) await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
-
+            // Commit the saved state locally first, then refresh the panel, subject list and
+            // calendar WHILE the "Saved as Draft" notice is on screen. They used to run only
+            // after "Okay, Got It"; the longer the session (more saved schedules = slower
+            // reloads), the longer the just-saved slices sat in the panel as new rows, and
+            // clicking the next subject meanwhile raised a false "Unsaved Changes".
+            // _onSubjectClick waits on window._postPublishPanelReady before judging.
             pendingManualSchedule = pendingManualSchedule.filter(c => !(c.ay === ay && c.sem === sem));
             if (typeof _rebuildHiddenDbSchedules === 'function') _rebuildHiddenDbSchedules();
             else hiddenDbSchedules.clear();
@@ -8178,22 +8303,21 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             const prog        = document.getElementById('sel_prog').value;
             const yl          = document.getElementById('sel_year').value;
             const currentSubj = document.getElementById('sel_subj').value;
-            // If the user has since switched to a different subject — while the save request
-            // was in flight, or while dismissing the "Saved as Draft" modal just above —
-            // currentSubj no longer refers to the subject that was actually saved.
-            // _onSubjectClick already loaded the correct panel (time slots, faculty) for
-            // whichever subject is showing now; reloading/resetting from data scoped to the
-            // ORIGINAL save would clobber that with stale leftovers instead — most visibly,
-            // the faculty box still showing the just-saved subject's faculty on top of a
-            // freshly-opened, unrelated subject that has none yet.
-            if (currentSubj !== _savingSubj) {
-                // Nothing to refresh for a subject that's no longer open — skip straight to
-                // the subject-agnostic refreshes below (list, grid, faculty load menu, etc.).
-            } else if (currentSubj) {
+            const _panelReady = (async () => {
+                // If the user switched to a different subject while the save request was in
+                // flight, that subject's panel was already loaded by _onSubjectClick; reloading
+                // from data scoped to the ORIGINAL save would clobber it with stale leftovers.
+                if (currentSubj !== _savingSubj) return;
+                if (!currentSubj) {
+                    document.getElementById('time-slots-container').innerHTML = '';
+                    addNewTimeSlot('','','','','',true);
+                    return;
+                }
                 try {
                     const _postSaveSectId = document.getElementById('sel_section')?.value || '';
                     const exResp = await fetch(`/api/manual/existing_sessions?subject_code=${encodeURIComponent(currentSubj)}&program=${encodeURIComponent(prog)}&year_level=${encodeURIComponent(yl)}&ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&section_id=${encodeURIComponent(_postSaveSectId)}`);
                     const exData = await exResp.json();
+                    if (document.getElementById('sel_subj').value !== currentSubj) return;
                     if (exData.success && exData.sessions && exData.sessions.length) {
                         await _loadExistingSessionsIntoSlices(exData.sessions);
                     } else {
@@ -8204,22 +8328,27 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
                     document.getElementById('time-slots-container').innerHTML = '';
                     addNewTimeSlot('','','','','',true);
                 }
-            } else {
-                document.getElementById('time-slots-container').innerHTML = '';
-                addNewTimeSlot('','','','','',true);
-            }
+            })();
+            window._postPublishPanelReady = _panelReady;
+            const _restReady = _panelReady.then(async () => {
+                await _updateSubjectList();
+                const gridRoom = _viewedRoomId();
+                if (currentMode === 'program') renderProgramTimetable();
+                else renderGrid(gridRoom, ay, sem);
+                await _initFlFacultyMenu();
+                _refreshFlIfVisible();
+                // Refresh draft and version history panels if they are currently visible
+                const _dlPanelPost = document.getElementById('draftListPanel');
+                if (_dlPanelPost && _dlPanelPost.style.display !== 'none') _loadDraftListPanel();
+                const _vhPanelPost = document.getElementById('versionHistoryPanel');
+                if (_vhPanelPost && _vhPanelPost.style.display !== 'none') _loadVersionHistoryPanel();
+            }).catch(() => {}).finally(() => {
+                if (window._postPublishPanelReady === _panelReady) window._postPublishPanelReady = null;
+            });
 
-            await _updateSubjectList();
-            const gridRoom = document.getElementById('sel_room').value;
-            if (currentMode === 'program') renderProgramTimetable();
-            else renderGrid(gridRoom, ay, sem);
-            await _initFlFacultyMenu();
-            _refreshFlIfVisible();
-            // Refresh draft and version history panels if they are currently visible
-            const _dlPanelPost = document.getElementById('draftListPanel');
-            if (_dlPanelPost && _dlPanelPost.style.display !== 'none') _loadDraftListPanel();
-            const _vhPanelPost = document.getElementById('versionHistoryPanel');
-            if (_vhPanelPost && _vhPanelPost.style.display !== 'none') _loadVersionHistoryPanel();
+            // A faculty reassignment explains itself once, after the status is settled below.
+            if (!_reassign) await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
+            await _restReady;
             setTimeout(() => window.isLeavingIntentionally = false, 100);
 
             // Faculty reassignment on a previously-Published subject (see unlockFacultyChoice):
@@ -8459,7 +8588,7 @@ async function confirmAllSlots(opts = {}) {
         const _ay = document.getElementById('sel_ay').value;
         const _sem = document.getElementById('sel_sem').value;
         if (currentMode === 'program') renderProgramTimetable();
-        else renderGrid(document.getElementById('sel_room').value, _ay, _sem);
+        else renderGrid(_viewedRoomId(), _ay, _sem);
         await _updateSubjectList();
     };
 
@@ -8922,7 +9051,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (typeof currentMode !== 'undefined' && currentMode === 'program') {
                     if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
                 } else if (typeof renderGrid === 'function') {
-                    renderGrid(document.getElementById('sel_room')?.value || '', formAyFilter(), formSemFilter());
+                    renderGrid(_viewedRoomId(), formAyFilter(), formSemFilter());
                 }
             }
         } catch (_pe) { /* keep the transfer as is */ }
@@ -9955,83 +10084,107 @@ function _applyRoomOccupancyFilter(sliceId) {
 })();
 
 /* ══════════════════════════════════════════════════════════════
-   CONTEXT PRESERVATION  (localStorage)
-   Restores AY / Semester / Program / Year Level / Room ONLY on
-   F5 / browser-refresh (navigation type = 'reload').
-   When the user arrives from another tab/page (navigation type =
-   'navigate') the page starts blank so they must re-select.
+   CONTEXT PRESERVATION (sessionStorage, per tab)
+   On F5 / browser reload the editor comes back exactly where it was: Academic Year,
+   Semester, Program, Year Level, Section, open Subject, view tab and room. It is restored
+   through the same handlers a user's own clicks use (selectBcAy, selectBcSect, ...), so
+   the labels and the hidden values always agree. (It used to skip restoring whenever the
+   hidden selects had their default values — which they always do — leaving every label
+   at "-Select-" while the hidden Semester silently stayed on the default term.)
+   Opening the editor fresh (a link, the sidebar, a new tab) still starts blank, and a
+   link that carries its own context (?prog=…&ay=…) always wins.
    ══════════════════════════════════════════════════════════════ */
 (function _initContextPersistence() {
-    const STORE_KEY = 'manualEditor_ctx';
+    const STORE_KEY = 'manualEditor_ctx_v2';
+    const txt = id => (document.getElementById(id)?.textContent || '').trim();
+    const val = id => document.getElementById(id)?.value || '';
 
     function _saveCtx() {
         try {
-            const ctx = {
-                ay:    document.getElementById('sel_ay')?.value   || '',
-                sem:   document.getElementById('sel_sem')?.value  || '',
-                prog:  document.getElementById('sel_prog')?.value || '',
-                yl:    document.getElementById('sel_year')?.value || '',
-                room:  document.getElementById('sel_room')?.value || '',
-                roomN: document.getElementById('room_display_name')?.value || '',
-            };
-            localStorage.setItem(STORE_KEY, JSON.stringify(ctx));
-        } catch(e) {}
+            const tab = document.querySelector('.mnav-tab.mnav-active')?.id || '';
+            sessionStorage.setItem(STORE_KEY, JSON.stringify({
+                ay: val('sel_ay'), ayLabel: txt('bc-ay-text'),
+                sem: val('sel_sem'), semLabel: txt('bc-sem-text'),
+                prog: val('sel_prog'),
+                yl: val('sel_year'), ylLabel: txt('bc-year-text'),
+                sect: val('sel_section'), sectName: txt('bc-sect-text'),
+                subj: val('sel_subj'),
+                tab: tab,
+                room: val('sel_room'), roomName: val('room_display_name'),
+                viewRoom: window._gridRoomId || '',      // room shown via the room dropdown above the calendar
+                // Only a context the user actually picked (labels filled in) is worth restoring.
+                picked: !!(val('sel_prog') && !/^-?select/i.test(txt('bc-prog-text'))),
+            }));
+        } catch (e) {}
+    }
+    // Saved when the page is left (F5 included) — always the latest state, no per-control hooks.
+    window.addEventListener('pagehide', _saveCtx);
+
+    const _wait = ms => new Promise(r => setTimeout(r, ms));
+    async function _waitFor(test, ms = 6000) {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) { if (test()) return true; await _wait(100); }
+        return false;
     }
 
     async function _restoreCtx() {
+        let ctx = null;
         try {
-            // Only restore on actual page refresh (F5), not when navigating from another page/tab
             const navType = performance.getEntriesByType('navigation')[0]?.type;
-            if (navType !== 'reload') {
-                localStorage.removeItem(STORE_KEY); // clear so next F5 also starts fresh
-                return;
+            const raw = sessionStorage.getItem(STORE_KEY);
+            sessionStorage.removeItem(STORE_KEY);
+            if (navType !== 'reload' || !raw) return;        // fresh visit: start blank
+            ctx = JSON.parse(raw);
+        } catch (e) { return; }
+        if (!ctx || !ctx.picked) return;
+        // A link that brings its own context (e.g. from Generate Schedule) wins.
+        const q = new URLSearchParams(location.search);
+        if (q.get('prog') || q.get('ay') || q.get('sect')) return;
+        try {
+            if (ctx.ay && typeof selectBcAy === 'function') {
+                selectBcAy(ctx.ay, ctx.ayLabel || ctx.ay); await _wait(300);
             }
-
-            const raw = localStorage.getItem(STORE_KEY);
-            if (!raw) return;
-            const ctx = JSON.parse(raw);
-            const ayEl   = document.getElementById('sel_ay');
-            const semEl  = document.getElementById('sel_sem');
-            const ylEl   = document.getElementById('sel_year');
-            const progEl = document.getElementById('sel_prog');
-
-            // Only restore if the page didn't already have server-side init values
-            const alreadyInit = (ayEl?.value || semEl?.value || ylEl?.value || progEl?.value);
-            if (alreadyInit) { _saveCtx(); return; }
-
-            if (ctx.ay && ayEl)    ayEl.value = ctx.ay;
-            if (ctx.sem && semEl)  semEl.value = ctx.sem;
-            if (ctx.yl && ylEl)    ylEl.value = ctx.yl;
-            if (ctx.prog && progEl) {
-                progEl.value = ctx.prog;
-                const trig = document.getElementById('prog_trigger_text');
-                if (trig) trig.innerText = ctx.prog;
+            if (ctx.sem && typeof selectBcSem === 'function') {
+                await _waitFor(() => document.querySelector(`#sel_sem option[value="${ctx.sem}"]`), 3000);
+                selectBcSem(ctx.sem, ctx.semLabel || ctx.sem); await _wait(300);
             }
-            if (ctx.prog || ctx.ay) {
-                if (typeof triggerCascade === 'function') await triggerCascade(true);
+            if (ctx.prog && typeof selectBcProg === 'function') { selectBcProg(ctx.prog); await _wait(500); }
+            if (ctx.yl && typeof selectBcYear === 'function') {
+                selectBcYear(ctx.yl, ctx.ylLabel || ctx.yl); await _wait(300);
             }
-            if (ctx.room && typeof selectRoom === 'function') {
-                const r = allRooms.find(rm => String(rm.id) === String(ctx.room));
-                if (r) selectRoom(String(r.id), r.name);
+            if (ctx.sect && typeof _loadSectionOptions === 'function') {
+                // Loads the section list and opens this section (awaits its subject list).
+                await _loadSectionOptions(ctx.sect, ctx.sectName);
             }
-        } catch(e) {}
+            if (ctx.tab && ctx.tab !== 'tab-room' && typeof switchEditorTab === 'function') {
+                const el = document.getElementById(ctx.tab);
+                if (el) switchEditorTab(ctx.tab.replace('tab-', ''), el);
+            }
+            if (ctx.room && typeof selectRoom === 'function' && ctx.tab !== 'tab-main') {
+                const r = (typeof allRooms !== 'undefined') && allRooms.find(rm => String(rm.id) === String(ctx.room));
+                if (r) await selectRoom(String(r.id), r.name);
+            }
+            if (ctx.subj) {
+                const sel = `.subj-item[data-code="${CSS.escape(ctx.subj)}"]`;
+                if (await _waitFor(() => document.querySelector(sel))) document.querySelector(sel).click();
+            }
+            // The room being viewed (dropdown above the calendar) — may differ from the form's room.
+            if (ctx.viewRoom && ctx.tab !== 'tab-main' && typeof _viewRoomOnly === 'function') {
+                const r = (typeof allRooms !== 'undefined') && allRooms.find(rm => String(rm.id) === String(ctx.viewRoom));
+                const hdr = document.getElementById('room-hdr-sel');
+                if (r && String(window._gridRoomId || '') !== String(r.id)) {
+                    await _wait(400);   // let the subject click's own grid render settle first
+                    if (hdr) {
+                        if (!hdr.querySelector(`option[value="${r.id}"]`)) {
+                            const o = document.createElement('option'); o.value = r.id; o.textContent = r.name; hdr.appendChild(o);
+                        }
+                        hdr.value = String(r.id);
+                    }
+                    await _viewRoomOnly(r.id);
+                }
+            }
+        } catch (e) { console.warn('[editor] context restore failed', e); }
     }
-
-    // Save whenever the dropdowns change
-    document.addEventListener('DOMContentLoaded', () => {
-        ['sel_ay','sel_sem','sel_year','sel_prog','sel_room'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener('change', _saveCtx);
-        });
-        // Also patch selectRoom to save after room is set
-        const _srOrig = window.selectRoom;
-        if (_srOrig) {
-            window.selectRoom = async function(roomId, roomName) {
-                await _srOrig.call(this, roomId, roomName);
-                _saveCtx();
-            };
-        }
-    });
 
     // Restore after the existing DOMContentLoaded chain runs
     window.addEventListener('load', _restoreCtx);
@@ -10088,7 +10241,7 @@ function switchEditorTab(tab, el) {
         if (typeof _progFetchToken !== 'undefined') _progFetchToken++;
         if (typeof _progPillsToken !== 'undefined') _progPillsToken++;
         currentMode = 'room';
-        const roomId = document.getElementById('sel_room').value;
+        const roomId = _viewedRoomId();
         renderGrid(roomId, formAyFilter(), formSemFilter());
     } else if (tab === 'main') {
         // PROGRAM VIEW — section-based timetable; no building/room filter
@@ -10412,7 +10565,7 @@ async function saveLocalArrangement(skipModal = false, options = {}) {
 
             // Refresh the calendar and subject list (for updated hours/badges)
             if (typeof renderGrid === 'function') {
-                const _room = document.getElementById('sel_room')?.value || '';
+                const _room = _viewedRoomId();
                 renderGrid(_room, ay, sem);
             }
             if (typeof _updateSubjectList === 'function') {
@@ -11452,7 +11605,7 @@ async function confirmDlpDelete() {
             // cards and calendar pills — neither was touched above, so both would keep showing
             // this draft as still scheduled until a full page reload. Refresh both now.
             if (typeof _updateSubjectList === 'function') await _updateSubjectList();
-            const _dlpRoom = document.getElementById('sel_room')?.value;
+            const _dlpRoom = _viewedRoomId();
             if (typeof currentMode !== 'undefined' && currentMode === 'program') {
                 if (typeof renderProgramTimetable === 'function') renderProgramTimetable();
             } else if (_dlpRoom && typeof renderGrid === 'function') {
@@ -12532,7 +12685,7 @@ async function restoreVersion(versionId, btn) {
             const ay  = document.getElementById('sel_ay')?.value  || '';
             const sem = document.getElementById('sel_sem')?.value || '';
             if (currentMode === 'program') renderProgramTimetable();
-            else renderGrid(document.getElementById('sel_room')?.value || '', ay, sem);
+            else renderGrid(_viewedRoomId(), ay, sem);
             await _initFlFacultyMenu();
             _refreshFlIfVisible();
             // HC16 group model: show the restored Draft of the open subject as it now is —
@@ -12647,7 +12800,7 @@ function _withRenderBatch(fn) {
 function _renderCalendarNow() {
     const ay  = document.getElementById('sel_ay')?.value  || '';
     const sem = document.getElementById('sel_sem')?.value || '';
-    const rm  = document.getElementById('sel_room')?.value || '';
+    const rm  = _viewedRoomId();
     return currentMode === 'program' ? renderProgramTimetable() : renderGrid(rm, ay, sem);
 }
 function _restorePanel(p) {
@@ -12795,6 +12948,8 @@ window.triggerCascade = async function(skipGridRender) {
 // through the slice's own setters (_origOnTsDayChange / _origTsSel), so the slice, the
 // pending schedule, progress bars and every existing check stay in step, and it is one undo
 // step. While dragging only a ghost moves — no fetch and no redraw until the drop.
+// Its top or bottom edge can also be dragged (resize): that changes only the start or the
+// end time, through the same setters and the same checks.
 (function _calendarDragDrop() {
     const wrapper = document.getElementById('gridWrapper');
     const table   = document.getElementById('mainTimetable');
@@ -12803,6 +12958,7 @@ window.triggerCascade = async function(skipGridRender) {
     const DAYS = _TS_DAYS_ALL;
     const MOVE_THRESHOLD = 5;   // px before a press becomes a drag — a plain click stays a click
     const EDGE = 28;            // px from the calendar edge that scrolls it while dragging
+    const RESIZE_H = 8;         // px band at a pill's top/bottom that resizes instead of moving
     let press = null;           // pointer down on a draggable pill, not moved far enough yet
     let drag  = null;           // drag in progress
     let frame = 0, lastEvent = null, swallowClick = false;
@@ -12862,7 +13018,12 @@ window.triggerCascade = async function(skipGridRender) {
 
     // '' = the slice can move there, a message = why not, null = data not loaded yet.
     function check(s, slot, secRows) {
-        const ei = slot.si + s.dur;
+        const ei = slot.ei || (slot.si + s.dur);
+        if (slot.ei && ei - slot.si > s.dur) {
+            const b = hoursBudget(s);
+            if (ei - slot.si > b.maxDur)
+                return `This would exceed ${_currentSubjectCode}'s ${b.req} hrs. The time was not changed.`;
+        }
         const a = _TS_TIMES.indexOf(timeSlots[slot.si - 1]);
         const b = _TS_TIMES.indexOf(timeSlots[ei - 1]);
         if (slot.si < 1 || a < 0 || b <= a) return 'That time is outside the scheduling hours.';
@@ -12929,8 +13090,41 @@ window.triggerCascade = async function(skipGridRender) {
                  y: e.clientY - r.top  - wrapper.clientTop  + wrapper.scrollTop };
     }
 
+    // 'top' / 'bottom' when the pointer is on a resizable pill's edge band, else 'move'.
+    function edgeOf(pill, clientY) {
+        const r = pill.getBoundingClientRect();
+        if (r.height < RESIZE_H * 3) return 'move';
+        if (clientY - r.top <= RESIZE_H) return 'top';
+        if (r.bottom - clientY <= RESIZE_H) return 'bottom';
+        return 'move';
+    }
+
+    // Resize budget: the subject's required hours and the longest this slice may become
+    // without the subject going over them (half-hour slots). Shrinking is always allowed;
+    // a slice already over (e.g. 3.5 / 3 hrs) can't grow at all.
+    function hoursBudget(s) {
+        const meta = (typeof _subjectMeta !== 'undefined' && _subjectMeta && _subjectMeta[_currentSubjectCode]) || {};
+        const req = Number(meta.total_hours) || 0;
+        if (req <= 0) return { req: 0, maxDur: Infinity };
+        const sched = Number(_getScheduledHoursForCode(_currentSubjectCode, ayVal(), semVal())) || 0;
+        const spare = Math.floor((req - sched) * 2 + 1e-6);         // free half-hour slots
+        return { req, maxDur: Math.max(s.dur, s.dur + spare) };
+    }
+
     function slotAt(pt) {
         const g = drag.g;
+        if (drag.mode !== 'move') {
+            // Snap the dragged edge to the nearest half-hour line; the other edge stays,
+            // and the slice never gets longer than the subject's hours allow.
+            const k = Math.round((pt.y - g.top) / g.rowH) + 1;
+            const s = drag.s, dayIdx = DAYS.indexOf(s.day), maxDur = drag.budget.maxDur;
+            if (drag.mode === 'top') {
+                const lo = Math.max(1, s.ei - maxDur);
+                return { dayIdx, day: s.day, si: clamp(k, lo, s.ei - 1), ei: s.ei, capped: k < lo };
+            }
+            const hi = Math.min(timeSlots.length, s.si + maxDur);
+            return { dayIdx, day: s.day, si: s.si, ei: clamp(k, s.si + 1, hi), capped: k > hi };
+        }
         const dayIdx = clamp(Math.floor((pt.x - g.left) / g.colW), 0, DAYS.length - 1);
         const si = clamp(Math.floor((pt.y - g.top) / g.rowH) - drag.grab + 1, 1, timeSlots.length - drag.s.dur);
         return { dayIdx, day: DAYS[dayIdx], si };
@@ -12938,30 +13132,38 @@ window.triggerCascade = async function(skipGridRender) {
 
     function place(pt) {
         const slot = slotAt(pt);
-        if (drag.slot && drag.slot.dayIdx === slot.dayIdx && drag.slot.si === slot.si) return;
+        if (drag.slot && drag.slot.dayIdx === slot.dayIdx && drag.slot.si === slot.si
+            && drag.slot.ei === slot.ei && !!drag.slot.capped === !!slot.capped) return;
         drag.slot = slot;
         const g = drag.g, s = drag.s;
+        const dur = slot.ei ? slot.ei - slot.si : s.dur;
         drag.ghost.style.left = (g.left + slot.dayIdx * g.colW + 3) + 'px';
         drag.ghost.style.top  = (g.top + (slot.si - 1) * g.rowH + 3) + 'px';
-        const same = slot.day === s.day && slot.si === s.si;
+        if (slot.ei) drag.ghost.style.height = Math.max(dur * g.rowH - 6, 20) + 'px';
+        const same = slot.day === s.day && slot.si === s.si && (!slot.ei || slot.ei === s.ei);
         const why  = same ? '' : check(s, slot, drag.secRows);
         drag.ghost.classList.toggle('dnd-ok',  !same && why === '');
         drag.ghost.classList.toggle('dnd-bad', !same && !!why);
         drag.ghost.title = why || '';
         // "Sat" over "1:30 – 3:00 PM": fits the narrow ghost (one long line was cut off).
         const t = i => timeSlots[i].replace(/^0/, '');
-        const a = t(slot.si - 1), b = t(slot.si - 1 + s.dur);
+        const a = t(slot.si - 1), b = t(slot.si - 1 + dur);
         drag.day.textContent   = slot.day.slice(0, 3);
         drag.label.textContent = a.slice(-2) === b.slice(-2) ? `${a.slice(0, -3)} – ${b}` : `${a} – ${b}`;
+        // Pulled past the subject's hours: the slice stops there and says why.
+        if (drag.note) {
+            drag.note.textContent = slot.capped ? `Max ${drag.budget.req} hrs — can't go longer` : '';
+            drag.note.hidden = !slot.capped;
+        }
     }
 
     function begin() {
         const g = geometry();
         if (!g) { press = null; return; }
-        const { pill, slice: s, pt, pointerId } = press;
+        const { pill, slice: s, pt, pointerId, mode } = press;
         press = null;
         const ghost = document.createElement('div');
-        ghost.className = 'dnd-ghost';
+        ghost.className = 'dnd-ghost' + (mode !== 'move' ? ' dnd-resize' : '');
         ghost.style.width  = (g.colW - 8) + 'px';
         ghost.style.height = pill.offsetHeight + 'px';
         ghost.style.backgroundColor = pill.style.backgroundColor;
@@ -12971,10 +13173,18 @@ window.triggerCascade = async function(skipGridRender) {
         ghost.firstChild.textContent = _currentSubjectCode;
         wrapper.appendChild(ghost);
         const timeEl = ghost.lastChild;
-        drag = { s, g, pill, ghost, day: timeEl.firstChild, label: timeEl.lastChild, slot: null, pointerId,
+        let note = null;
+        if (mode !== 'move') {
+            note = document.createElement('div');
+            note.className = 'dnd-ghost-note'; note.hidden = true;
+            ghost.appendChild(note);
+        }
+        drag = { s, g, pill, ghost, day: timeEl.firstChild, label: timeEl.lastChild, slot: null, pointerId, mode,
+                 note, budget: mode !== 'move' ? hoursBudget(s) : { req: 0, maxDur: Infinity },
                  grab: clamp(Math.floor((pt.y - pill.offsetTop) / g.rowH), 0, s.dur - 1) };
         pill.classList.add('dnd-source');
         document.body.classList.add('dnd-active');
+        document.body.classList.toggle('dnd-resizing', mode !== 'move');
         window._dndBusy = true;   // no Undo/Redo or new drag until this one is settled
         window.getSelection()?.removeAllRanges();
         try { wrapper.setPointerCapture(pointerId); } catch (e) {}
@@ -13018,7 +13228,7 @@ window.triggerCascade = async function(skipGridRender) {
     function cleanup(d) {
         d.ghost.remove();
         d.pill.classList.remove('dnd-source');
-        document.body.classList.remove('dnd-active');
+        document.body.classList.remove('dnd-active', 'dnd-resizing');
         window._dndBusy = false;
     }
     function cancel() { press = null; const d = end(); if (d) cleanup(d); }
@@ -13027,12 +13237,15 @@ window.triggerCascade = async function(skipGridRender) {
         const d = end();
         if (!d) return;
         const slot = d.slot;
-        if (!slot || (slot.day === d.s.day && slot.si === d.s.si)) { cleanup(d); return; }
+        if (!slot || (slot.day === d.s.day && slot.si === d.s.si && (!slot.ei || slot.ei === d.s.ei))) {
+            cleanup(d); return;
+        }
         d.ghost.classList.add('dnd-pending');
         try { await applyMove(d.s, slot, d.facBefore, d.secRowsP); }
         catch (e) {
             console.error('[calendar drag]', e);
-            showValidationModal('Cannot Move Schedule', 'The schedule could not be moved. Please try again.');
+            showValidationModal(slot.ei ? 'Cannot Change Time' : 'Cannot Move Schedule',
+                'The schedule could not be changed. Please try again.');
         }
         finally { cleanup(d); }
     }
@@ -13044,11 +13257,12 @@ window.triggerCascade = async function(skipGridRender) {
         }
         const secRows = await secRowsP;
         if (!s.row.isConnected) return;   // the subject was closed meanwhile
+        const title = slot.ei ? 'Cannot Change Time' : 'Cannot Move Schedule';
         let why = check(s, slot, secRows);
         if (why === null) why = 'The schedule could not be loaded to check for conflicts. Please try again.';
-        if (why) { showValidationModal('Cannot Move Schedule', why); return; }
+        if (why) { showValidationModal(title, why); return; }
 
-        const startStr = timeSlots[slot.si - 1], endStr = timeSlots[slot.si - 1 + s.dur];
+        const startStr = timeSlots[slot.si - 1], endStr = timeSlots[(slot.ei || slot.si + s.dur) - 1];
         const before = _snapshotState();
         const applied = _withRenderBatch(() => {
             if (slot.day !== s.day) {
@@ -13070,7 +13284,8 @@ window.triggerCascade = async function(skipGridRender) {
         });
         if (!applied) {
             _restoreSnapshot(before);
-            showValidationModal('Cannot Move Schedule', 'That day and time is not available for this slice.');
+            showValidationModal(title, slot.ei ? 'That time is not available for this slice.'
+                                               : 'That day and time is not available for this slice.');
             return;
         }
 
@@ -13101,6 +13316,19 @@ window.triggerCascade = async function(skipGridRender) {
         const pill = e.target.closest?.('.schedule-pill');
         if (pill && !drag) pill.classList.toggle('dnd-draggable', !!sliceFor(pill));
     });
+    // Resize cursor on a draggable pill's top/bottom edge band.
+    wrapper.addEventListener('pointermove', e => {
+        if (drag || press) return;
+        const pill = e.target.closest?.('.schedule-pill');
+        if (!pill) return;
+        const edge = pill.classList.contains('dnd-draggable') && !e.target.closest('.pill-drop-btn')
+            ? edgeOf(pill, e.clientY) : 'move';
+        pill.classList.toggle('dnd-resize-edge', edge !== 'move');
+    });
+    wrapper.addEventListener('pointerout', e => {
+        const pill = e.target.closest?.('.schedule-pill');
+        if (pill && !pill.contains(e.relatedTarget)) pill.classList.remove('dnd-resize-edge');
+    });
 
     wrapper.addEventListener('pointerdown', e => {
         if (drag || window._dndBusy || e.button !== 0 || e.pointerType === 'touch') return;
@@ -13108,7 +13336,8 @@ window.triggerCascade = async function(skipGridRender) {
         if (!pill || e.target.closest('.pill-drop-btn')) return;
         const slice = sliceFor(pill);
         if (!slice) return;   // not this subject's slice: a normal click opens it first
-        press = { pill, slice, x: e.clientX, y: e.clientY, pt: contentPoint(e), pointerId: e.pointerId };
+        press = { pill, slice, x: e.clientX, y: e.clientY, pt: contentPoint(e), pointerId: e.pointerId,
+                  mode: edgeOf(pill, e.clientY) };
     });
 
     window.addEventListener('pointermove', e => {

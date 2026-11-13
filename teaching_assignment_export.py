@@ -25,6 +25,7 @@ ADVISING TIME. SUBJ. REF. is derived from the program: diploma programs
 """
 import csv
 import io
+import export_style
 import re
 
 
@@ -208,39 +209,66 @@ def _official_rows():
 
 
 
+# One faculty's payload, or several (the Academic Head's Subject/Faculty Assignment
+# export: one form per faculty — a new page in PDF/Word, a new sheet in Excel).
+def _payloads(d):
+    return d if isinstance(d, (list, tuple)) else [d]
+
+
+def _sheet_title(d, used):
+    # Excel sheet names: max 31 chars, none of  [ ] : * ? / \
+    base = re.sub(r'[\[\]:*?/\\]', '', (d.get('fullname') or d.get('employeenumber') or 'Faculty'))[:28].strip() or 'Faculty'
+    title, n = base, 2
+    while title.lower() in used:
+        title = f"{base[:26]} {n}"; n += 1
+    used.add(title.lower())
+    return title
+
+
+# Optional hooks set by the app for the Reports export (page orientation); unset = the
+# form's own A4 portrait page, exactly as the faculty's own export.
+PDF_DOC_FACTORY = None      # callable like SimpleDocTemplate(buf, pagesize=..., **kw)
+DOCX_HOOK = None            # callable(docx Document) run just before saving
+
+
+
+
 # ─────────────────────────────────────────────────────────────
 #  CSV — same sections, text letterhead (a CSV can't hold the logo)
 # ─────────────────────────────────────────────────────────────
 def gen_csv(d, logo_path=None):
     out = io.StringIO()
     w = csv.writer(out)
-    for line in _title_lines(d):
-        w.writerow([line])
-    w.writerow([CAMPUS])
-    w.writerow([])
-    for a, b, c, e in _info_rows(d):
-        w.writerow([a, b, c, e])
-    for title, rows, total_lbl, total in _sections(d):
+    for _idx, d in enumerate(_payloads(d)):
+        if _idx:                                    # next faculty's form
+            w.writerow([]); w.writerow([]); w.writerow(['-' * 40]); w.writerow([])
+        for line in _title_lines(d):
+            w.writerow([line])
+        w.writerow([CAMPUS])
         w.writerow([])
-        w.writerow([title])
-        w.writerow(LOAD_HEADERS)
-        for r in rows:
-            w.writerow(_load_row(r))
-        w.writerow([total_lbl, _num(total)])
-    if _ts_line(d):
-        w.writerow([_ts_line(d)[0], _num(_ts_line(d)[1])])
-    w.writerow([])
-    w.writerow(['TEACHING LOAD PER DAY (HOURS)'])
-    w.writerow([''] + DAY_HEADERS)
-    for row in _per_day_rows(d):
-        w.writerow(row)
-    w.writerow([])
-    w.writerow(['OFFICIAL TIME / ADVISING TIME'])
-    w.writerow([''] + DAY_HEADERS)
-    for row in _official_rows():
-        w.writerow(row)
-    w.writerow([])
-    w.writerow([LEGEND])
+        for a, b, c, e in _info_rows(d):
+            w.writerow([a, b, c, e])
+        for title, rows, total_lbl, total in _sections(d):
+            w.writerow([])
+            w.writerow([title])
+            w.writerow(LOAD_HEADERS)
+            for r in rows:
+                w.writerow(_load_row(r))
+            w.writerow([total_lbl, _num(total)])
+        if _ts_line(d):
+            w.writerow([_ts_line(d)[0], _num(_ts_line(d)[1])])
+        w.writerow([])
+        w.writerow(['TEACHING LOAD PER DAY (HOURS)'])
+        w.writerow([''] + DAY_HEADERS)
+        for row in _per_day_rows(d):
+            w.writerow(row)
+        w.writerow([])
+        w.writerow(['OFFICIAL TIME / ADVISING TIME'])
+        w.writerow([''] + DAY_HEADERS)
+        for row in _official_rows():
+            w.writerow(row)
+        w.writerow([])
+        w.writerow([LEGEND])
     return out.getvalue().encode('utf-8-sig')
 
 
@@ -256,115 +284,118 @@ def gen_xlsx(d, logo_path=None):
 
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = 'Faculty Assignment'
-    ws.sheet_view.showGridLines = False
-    ws.page_setup.orientation = 'portrait'
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
+    _titles = set()
+    for _idx, d in enumerate(_payloads(d)):
+        ws = wb.active if _idx == 0 else wb.create_sheet()
+        ws.title = _sheet_title(d, _titles)
+        ws.sheet_view.showGridLines = False
+        ws.page_setup.orientation = 'portrait'
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
 
 
-    MAROON = PatternFill('solid', fgColor=MAROON_HEX)
-    SHADE = PatternFill('solid', fgColor='F2F2F2')
-    thin = Side(style='thin', color='000000')
-    brd = Border(left=thin, right=thin, top=thin, bottom=thin)
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    left = Alignment(horizontal='left', vertical='center', wrap_text=True)
-    N = len(LOAD_HEADERS)
-    for ci, wdt in enumerate(LOAD_XLSX_W, 1):
-        ws.column_dimensions[get_column_letter(ci)].width = wdt
+        MAROON = PatternFill('solid', fgColor=MAROON_HEX)
+        SHADE = PatternFill('solid', fgColor='F2F2F2')
+        thin = Side(style='thin', color='000000')
+        brd = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        N = len(LOAD_HEADERS)
+        for ci, wdt in enumerate(LOAD_XLSX_W, 1):
+            ws.column_dimensions[get_column_letter(ci)].width = wdt
 
 
-    def merged(r, c1, c2, value, font=None, fill=None, align=None, border=False):
-        if c2 > c1:
-            ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
-        cell = ws.cell(r, c1, value)
-        if font: cell.font = font
-        if fill: cell.fill = fill
-        cell.alignment = align or center
-        if border:
-            for c in range(c1, c2 + 1):
-                ws.cell(r, c).border = brd
-        return cell
+        def merged(r, c1, c2, value, font=None, fill=None, align=None, border=False):
+            if c2 > c1:
+                ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
+            cell = ws.cell(r, c1, value)
+            if font: cell.font = font
+            if fill: cell.fill = fill
+            cell.alignment = align or center
+            if border:
+                for c in range(c1, c2 + 1):
+                    ws.cell(r, c).border = brd
+            return cell
 
 
-    rn = 1
-    try:
-        from openpyxl.drawing.image import Image as _XLImage
-        logo = _XLImage(logo_path)
-        logo.height = 46; logo.width = 46
-        ws.row_dimensions[rn].height = 36
-        ws.add_image(logo, f'A{rn}')
-    except Exception:
-        pass
-    rn += 1
-    for i, text in enumerate(_title_lines(d)):
-        merged(rn, 1, N, text, Font(bold=True, size=12 if i == 0 else 10))
-        ws.row_dimensions[rn].height = 18; rn += 1
-    merged(rn, 1, N, CAMPUS, Font(bold=True, size=12, color='FFFFFF'), MAROON)
-    ws.row_dimensions[rn].height = 18; rn += 2
-
-
-    # Header block: label A-B | value C-E | label F-G | value H-J
-    for a, b, c, e in _info_rows(d):
-        merged(rn, 1, 2, a, Font(bold=True, size=9), SHADE, left, True)
-        merged(rn, 3, 5, b, Font(size=9), None, left, True)
-        merged(rn, 6, 7, c, Font(bold=True, size=9), SHADE, left, True)
-        merged(rn, 8, 10, e, Font(size=9), None, left, True)
+        rn = 1
+        try:
+            from openpyxl.drawing.image import Image as _XLImage
+            logo = _XLImage(logo_path)
+            logo.height = 46; logo.width = 46
+            ws.row_dimensions[rn].height = 36
+            ws.add_image(logo, f'A{rn}')
+        except Exception:
+            pass
         rn += 1
-    rn += 1
+        for i, text in enumerate(_title_lines(d)):
+            merged(rn, 1, N, text, Font(bold=True, size=12 if i == 0 else 10))
+            ws.row_dimensions[rn].height = 18; rn += 1
+        merged(rn, 1, N, CAMPUS, Font(bold=True, size=12, color='FFFFFF'), MAROON)
+        ws.row_dimensions[rn].height = 18; rn += 2
 
 
-    for title, rows, total_lbl, total in _sections(d):
-        ws.cell(rn, 1, title).font = Font(bold=True, size=10)
-        rn += 1
-        for ci, h in enumerate(LOAD_HEADERS, 1):
-            c = ws.cell(rn, ci, h); c.font = Font(bold=True, size=8); c.border = brd; c.alignment = center
-        ws.row_dimensions[rn].height = 24; rn += 1
-        for i in range(max(len(rows), MIN_LOAD_ROWS)):
-            vals = _load_row(rows[i]) if i < len(rows) else [''] * N
-            for ci, v in enumerate(vals):
-                c = ws.cell(rn, ci + 1, _xl_num(rows[i].get('units')) if (ci == 2 and i < len(rows)) else v)
-                c.font = Font(size=8); c.border = brd
-                c.alignment = center if ci in LOAD_CENTER else left
-            rn += 1
-        ws.cell(rn, 1, total_lbl).font = Font(bold=True, size=9)
-        c = ws.cell(rn, 3, _xl_num(total)); c.font = Font(bold=True, size=9); c.alignment = center
-        rn += 2
-    ts = _ts_line(d)
-    if ts:
-        ws.cell(rn, 1, ts[0]).font = Font(bold=True, size=9)
-        ws.cell(rn, 3, _xl_num(ts[1])).font = Font(bold=True, size=9)
-        rn += 2
-
-
-    # Day grids: label A-B | MON..SUN in C..I
-    for grid_title, grid_rows, height in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), 16),
-                                          ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 30)):
-        merged(rn, 1, 9, grid_title, Font(bold=True, size=10))
-        rn += 1
-        merged(rn, 1, 2, '', border=True)
-        for i, h in enumerate(DAY_HEADERS):
-            c = ws.cell(rn, 3 + i, h); c.font = Font(bold=True, size=8); c.border = brd; c.alignment = center
-        rn += 1
-        for row in grid_rows:
-            merged(rn, 1, 2, row[0], Font(bold=True, size=8), None, left, True)
-            for i, v in enumerate(row[1:]):
-                c = ws.cell(rn, 3 + i, _xl_num(v) if v != '' else '')
-                c.font = Font(bold=(row[0] == 'TOTAL'), size=8); c.border = brd; c.alignment = center
-            ws.row_dimensions[rn].height = height
+        # Header block: label A-B | value C-E | label F-G | value H-J
+        for a, b, c, e in _info_rows(d):
+            merged(rn, 1, 2, a, Font(bold=True, size=9), SHADE, left, True)
+            merged(rn, 3, 5, b, Font(size=9), None, left, True)
+            merged(rn, 6, 7, c, Font(bold=True, size=9), SHADE, left, True)
+            merged(rn, 8, 10, e, Font(size=9), None, left, True)
             rn += 1
         rn += 1
 
 
-    merged(rn, 1, N, LEGEND, Font(bold=True, size=8), None, left)
-    rn += 3
-    merged(rn, 7, 10, '______________________________', Font(size=9))
-    merged(rn + 1, 7, 10, 'Signature over Printed Name', Font(size=8, italic=True))
+        for title, rows, total_lbl, total in _sections(d):
+            ws.cell(rn, 1, title).font = Font(bold=True, size=10)
+            rn += 1
+            for ci, h in enumerate(LOAD_HEADERS, 1):
+                c = ws.cell(rn, ci, h); c.font = Font(bold=True, size=8); c.border = brd; c.alignment = center
+            ws.row_dimensions[rn].height = 24; rn += 1
+            for i in range(max(len(rows), MIN_LOAD_ROWS)):
+                vals = _load_row(rows[i]) if i < len(rows) else [''] * N
+                for ci, v in enumerate(vals):
+                    c = ws.cell(rn, ci + 1, _xl_num(rows[i].get('units')) if (ci == 2 and i < len(rows)) else v)
+                    c.font = Font(size=8); c.border = brd
+                    c.alignment = center if ci in LOAD_CENTER else left
+                rn += 1
+            ws.cell(rn, 1, total_lbl).font = Font(bold=True, size=9)
+            c = ws.cell(rn, 3, _xl_num(total)); c.font = Font(bold=True, size=9); c.alignment = center
+            rn += 2
+        ts = _ts_line(d)
+        if ts:
+            ws.cell(rn, 1, ts[0]).font = Font(bold=True, size=9)
+            ws.cell(rn, 3, _xl_num(ts[1])).font = Font(bold=True, size=9)
+            rn += 2
+
+
+        # Day grids: label A-B | MON..SUN in C..I
+        for grid_title, grid_rows, height in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), 16),
+                                              ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 30)):
+            merged(rn, 1, 9, grid_title, Font(bold=True, size=10))
+            rn += 1
+            merged(rn, 1, 2, '', border=True)
+            for i, h in enumerate(DAY_HEADERS):
+                c = ws.cell(rn, 3 + i, h); c.font = Font(bold=True, size=8); c.border = brd; c.alignment = center
+            rn += 1
+            for row in grid_rows:
+                merged(rn, 1, 2, row[0], Font(bold=True, size=8), None, left, True)
+                for i, v in enumerate(row[1:]):
+                    c = ws.cell(rn, 3 + i, _xl_num(v) if v != '' else '')
+                    c.font = Font(bold=(row[0] == 'TOTAL'), size=8); c.border = brd; c.alignment = center
+                ws.row_dimensions[rn].height = height
+                rn += 1
+            rn += 1
+
+
+        merged(rn, 1, N, LEGEND, Font(bold=True, size=8), None, left)
+        rn += 3
+        merged(rn, 7, 10, '______________________________', Font(size=9))
+        merged(rn + 1, 7, 10, 'Signature over Printed Name', Font(size=8, italic=True))
 
 
     buf = io.BytesIO()
+    export_style.xlsx_apply(wb)          # Arial, >= 12 pt, logo centered
     wb.save(buf); buf.seek(0)
     return buf.read()
 
@@ -426,75 +457,81 @@ def gen_docx(d, logo_path=None):
         return p
 
 
-    try:
-        p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.add_run().add_picture(logo_path, width=Cm(1.8))
-    except Exception:
-        pass
-    for i, text in enumerate(_title_lines(d)):
-        _para(text, sz=14 if i == 0 else 10, align=WD_ALIGN_PARAGRAPH.CENTER, before=0)
-    camp = doc.add_table(rows=1, cols=1)
-    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
-    _cell(camp.rows[0].cells[0], CAMPUS, bold=True, sz=11, fill=MAROON_HEX, color=WHITE)
-    _widths(camp, [sum(LOAD_COL_CM)])
-    _para('', before=2)
+    for _idx, d in enumerate(_payloads(d)):
+        if _idx:
+            doc.add_page_break()                    # next faculty's form
+        try:
+            p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(logo_path, width=Cm(1.8))
+        except Exception:
+            pass
+        for i, text in enumerate(_title_lines(d)):
+            _para(text, sz=14 if i == 0 else 10, align=WD_ALIGN_PARAGRAPH.CENTER, before=0)
+        camp = doc.add_table(rows=1, cols=1)
+        camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _cell(camp.rows[0].cells[0], CAMPUS, bold=True, sz=11, fill=MAROON_HEX, color=WHITE)
+        _widths(camp, [sum(LOAD_COL_CM)])
+        _para('', before=2)
 
 
-    info = doc.add_table(rows=3, cols=4)
-    info.style = 'Table Grid'; info.alignment = WD_TABLE_ALIGNMENT.CENTER
-    for ri, vals in enumerate(_info_rows(d)):
-        cells = info.rows[ri].cells
-        for ci, v in enumerate(vals):
-            _cell(cells[ci], v, bold=(ci % 2 == 0), sz=8, fill='F2F2F2' if ci % 2 == 0 else None,
-                  align=WD_ALIGN_PARAGRAPH.LEFT)
-    _widths(info, [2.4, 6.9, 2.4, 6.9])
-
-
-    for title, rows, total_lbl, total in _sections(d):
-        _para(title, sz=9, before=8)
-        n_rows = max(len(rows), MIN_LOAD_ROWS)
-        tbl = doc.add_table(rows=1 + n_rows, cols=len(LOAD_HEADERS))
-        tbl.style = 'Table Grid'; tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _widths(tbl, LOAD_COL_CM)
-        for ci, h in enumerate(LOAD_HEADERS):
-            _cell(tbl.rows[0].cells[ci], h, bold=True, sz=6.5)
-        for i in range(n_rows):
-            vals = _load_row(rows[i]) if i < len(rows) else [''] * len(LOAD_HEADERS)
-            cells = tbl.rows[i + 1].cells
+        info = doc.add_table(rows=3, cols=4)
+        info.style = 'Table Grid'; info.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for ri, vals in enumerate(_info_rows(d)):
+            cells = info.rows[ri].cells
             for ci, v in enumerate(vals):
-                _cell(cells[ci], v, sz=7,
-                      align=WD_ALIGN_PARAGRAPH.CENTER if ci in LOAD_CENTER else WD_ALIGN_PARAGRAPH.LEFT)
-        _para(f"{total_lbl}   {_num(total)}", sz=8, before=2)
-    ts = _ts_line(d)
-    if ts:
-        _para(f"{ts[0]}   {_num(ts[1])}", sz=8, before=2)
+                _cell(cells[ci], v, bold=(ci % 2 == 0), sz=8, fill='F2F2F2' if ci % 2 == 0 else None,
+                      align=WD_ALIGN_PARAGRAPH.LEFT)
+        _widths(info, [2.4, 6.9, 2.4, 6.9])
 
 
-    grid_w = [3.0] + [2.2] * 7
-    for grid_title, grid_rows in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d)),
-                                  ('OFFICIAL TIME / ADVISING TIME', _official_rows())):
-        _para(grid_title, sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, before=8)
-        g = doc.add_table(rows=1 + len(grid_rows), cols=8)
-        g.style = 'Table Grid'; g.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _widths(g, grid_w)
-        _cell(g.rows[0].cells[0], '', sz=7)
-        for i, h in enumerate(DAY_HEADERS):
-            _cell(g.rows[0].cells[i + 1], h, bold=True, sz=7)
-        for ri, row in enumerate(grid_rows):
-            cells = g.rows[ri + 1].cells
-            _cell(cells[0], row[0], bold=True, sz=7, align=WD_ALIGN_PARAGRAPH.LEFT)
-            for i, v in enumerate(row[1:]):
-                _cell(cells[i + 1], v, bold=(row[0] == 'TOTAL'), sz=7)
-            if grid_title.startswith('OFFICIAL'):
-                g.rows[ri + 1].height = Cm(0.9)
+        for title, rows, total_lbl, total in _sections(d):
+            _para(title, sz=9, before=8)
+            n_rows = max(len(rows), MIN_LOAD_ROWS)
+            tbl = doc.add_table(rows=1 + n_rows, cols=len(LOAD_HEADERS))
+            tbl.style = 'Table Grid'; tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+            _widths(tbl, LOAD_COL_CM)
+            for ci, h in enumerate(LOAD_HEADERS):
+                _cell(tbl.rows[0].cells[ci], h, bold=True, sz=6.5)
+            for i in range(n_rows):
+                vals = _load_row(rows[i]) if i < len(rows) else [''] * len(LOAD_HEADERS)
+                cells = tbl.rows[i + 1].cells
+                for ci, v in enumerate(vals):
+                    _cell(cells[ci], v, sz=7,
+                          align=WD_ALIGN_PARAGRAPH.CENTER if ci in LOAD_CENTER else WD_ALIGN_PARAGRAPH.LEFT)
+            _para(f"{total_lbl}   {_num(total)}", sz=8, before=2)
+        ts = _ts_line(d)
+        if ts:
+            _para(f"{ts[0]}   {_num(ts[1])}", sz=8, before=2)
 
 
-    _para(LEGEND, sz=7, before=8)
-    _para('______________________________', bold=False, sz=9, align=WD_ALIGN_PARAGRAPH.RIGHT, before=22)
-    _para('Signature over Printed Name', bold=False, italic=True, sz=8, align=WD_ALIGN_PARAGRAPH.RIGHT, before=0)
+        grid_w = [3.0] + [2.2] * 7
+        for grid_title, grid_rows in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d)),
+                                      ('OFFICIAL TIME / ADVISING TIME', _official_rows())):
+            _para(grid_title, sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, before=8)
+            g = doc.add_table(rows=1 + len(grid_rows), cols=8)
+            g.style = 'Table Grid'; g.alignment = WD_TABLE_ALIGNMENT.CENTER
+            _widths(g, grid_w)
+            _cell(g.rows[0].cells[0], '', sz=7)
+            for i, h in enumerate(DAY_HEADERS):
+                _cell(g.rows[0].cells[i + 1], h, bold=True, sz=7)
+            for ri, row in enumerate(grid_rows):
+                cells = g.rows[ri + 1].cells
+                _cell(cells[0], row[0], bold=True, sz=7, align=WD_ALIGN_PARAGRAPH.LEFT)
+                for i, v in enumerate(row[1:]):
+                    _cell(cells[i + 1], v, bold=(row[0] == 'TOTAL'), sz=7)
+                if grid_title.startswith('OFFICIAL'):
+                    g.rows[ri + 1].height = Cm(0.9)
 
 
+        _para(LEGEND, sz=7, before=8)
+        _para('______________________________', bold=False, sz=9, align=WD_ALIGN_PARAGRAPH.RIGHT, before=22)
+        _para('Signature over Printed Name', bold=False, italic=True, sz=8, align=WD_ALIGN_PARAGRAPH.RIGHT, before=0)
+
+
+    if DOCX_HOOK:
+        DOCX_HOOK(doc)                              # e.g. the Reports export's page orientation
     buf = io.BytesIO()
+    export_style.docx_apply(doc)         # Arial, >= 12 pt
     doc.save(buf); buf.seek(0)
     return buf.read()
 
@@ -510,15 +547,15 @@ def gen_pdf(d, logo_path=None):
     from reportlab.lib.units import cm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
-                                    KeepTogether, Image as _RLImage)
+                                    KeepTogether, PageBreak, Image as _RLImage)
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from xml.sax.saxutils import escape as _esc
 
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.2*cm, rightMargin=1.2*cm,
-                            topMargin=0.9*cm, bottomMargin=0.9*cm,
-                            title='Faculty Assignment', author='PUP Lopez Scheduling System')
+    doc = (PDF_DOC_FACTORY or SimpleDocTemplate)(
+        buf, pagesize=A4, leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=0.9*cm, bottomMargin=0.9*cm,
+        title='Faculty Assignment', author='PUP Lopez Scheduling System')
     BLACK, WHITE = colors.black, colors.white
     MAROON = colors.HexColor('#' + MAROON_HEX)
     SHADE = colors.HexColor('#F2F2F2')
@@ -552,59 +589,63 @@ def gen_pdf(d, logo_path=None):
     story = []
 
 
-    try:
-        logo = _RLImage(logo_path, width=1.35*cm, height=1.35*cm); logo.hAlign = 'CENTER'
-        story.append(logo)
-    except Exception:
-        pass
-    lines = _title_lines(d)
-    story.append(Paragraph(_esc(lines[0]), h1))
-    for extra in lines[1:]:
-        story.append(Paragraph(_esc(extra), hsub))
-    camp = Table([[Paragraph(CAMPUS, campus)]], colWidths=[FULL])
-    camp.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
-    story += [camp, Spacer(1, 0.25*cm)]
+    for _idx, d in enumerate(_payloads(d)):
+        if _idx:
+            story.append(PageBreak())               # next faculty's form
+        try:
+            logo = _RLImage(logo_path, width=1.35*cm, height=1.35*cm); logo.hAlign = 'CENTER'
+            story.append(logo)
+        except Exception:
+            pass
+        lines = _title_lines(d)
+        story.append(Paragraph(_esc(lines[0]), h1))
+        for extra in lines[1:]:
+            story.append(Paragraph(_esc(extra), hsub))
+        camp = Table([[Paragraph(CAMPUS, campus)]], colWidths=[FULL])
+        camp.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+        story += [camp, Spacer(1, 0.25*cm)]
 
 
-    info = Table([[P(a, bold_l), P(b, cell_l), P(c, bold_l), P(e, cell_l)] for a, b, c, e in _info_rows(d)],
-                 colWidths=[2.4*cm, FULL/2 - 2.4*cm, 2.4*cm, FULL/2 - 2.4*cm])
-    info.setStyle(TableStyle(grid + [('BACKGROUND', (0, 0), (0, -1), SHADE), ('BACKGROUND', (2, 0), (2, -1), SHADE)]))
-    story.append(info)
+        info = Table([[P(a, bold_l), P(b, cell_l), P(c, bold_l), P(e, cell_l)] for a, b, c, e in _info_rows(d)],
+                     colWidths=[2.4*cm, FULL/2 - 2.4*cm, 2.4*cm, FULL/2 - 2.4*cm])
+        info.setStyle(TableStyle(grid + [('BACKGROUND', (0, 0), (0, -1), SHADE), ('BACKGROUND', (2, 0), (2, -1), SHADE)]))
+        story.append(info)
 
 
-    for title, rows, total_lbl, total in _sections(d):
-        data = [[P(h, hdr) for h in LOAD_HEADERS]]
-        for i in range(max(len(rows), MIN_LOAD_ROWS)):
-            vals = _load_row(rows[i]) if i < len(rows) else [''] * len(LOAD_HEADERS)
-            data.append([P(v, cell_c if ci in LOAD_CENTER else cell_l) for ci, v in enumerate(vals)])
-        tbl = Table(data, colWidths=[w*cm for w in LOAD_COL_CM], repeatRows=1,
-                    rowHeights=[None] + [0.5*cm if i >= len(rows) else None for i in range(len(data) - 1)])
-        tbl.setStyle(TableStyle(grid))
-        story.append(KeepTogether([Paragraph(title, sec), tbl,
-                                   Paragraph(f"{_esc(total_lbl)}&nbsp;&nbsp;&nbsp;{_esc(_num(total))}", total_s)]))
-    ts = _ts_line(d)
-    if ts:
-        story.append(Paragraph(f"{_esc(ts[0])}&nbsp;&nbsp;&nbsp;{_esc(_num(ts[1]))}", total_s))
+        for title, rows, total_lbl, total in _sections(d):
+            data = [[P(h, hdr) for h in LOAD_HEADERS]]
+            for i in range(max(len(rows), MIN_LOAD_ROWS)):
+                vals = _load_row(rows[i]) if i < len(rows) else [''] * len(LOAD_HEADERS)
+                data.append([P(v, cell_c if ci in LOAD_CENTER else cell_l) for ci, v in enumerate(vals)])
+            tbl = Table(data, colWidths=[w*cm for w in LOAD_COL_CM], repeatRows=1,
+                        rowHeights=[None] + [0.5*cm if i >= len(rows) else None for i in range(len(data) - 1)])
+            tbl.setStyle(TableStyle(grid))
+            story.append(KeepTogether([Paragraph(title, sec), tbl,
+                                       Paragraph(f"{_esc(total_lbl)}&nbsp;&nbsp;&nbsp;{_esc(_num(total))}", total_s)]))
+        ts = _ts_line(d)
+        if ts:
+            story.append(Paragraph(f"{_esc(ts[0])}&nbsp;&nbsp;&nbsp;{_esc(_num(ts[1]))}", total_s))
 
 
-    day_w = [3.0*cm] + [(FULL - 3.0*cm) / 7] * 7
-    for grid_title, grid_rows, row_h in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), None),
-                                         ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 0.85*cm)):
-        data = [[P('', cell_c)] + [P(h, hdr) for h in DAY_HEADERS]]
-        for row in grid_rows:
-            st = bold_c if row[0] == 'TOTAL' else cell_c
-            data.append([P(row[0], bold_l)] + [P(v, st) for v in row[1:]])
-        t = Table(data, colWidths=day_w, rowHeights=[None] + [row_h] * len(grid_rows))
-        t.setStyle(TableStyle(grid))
-        story.append(KeepTogether([Paragraph(grid_title, sec_c), t]))
+        day_w = [3.0*cm] + [(FULL - 3.0*cm) / 7] * 7
+        for grid_title, grid_rows, row_h in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), None),
+                                             ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 0.85*cm)):
+            data = [[P('', cell_c)] + [P(h, hdr) for h in DAY_HEADERS]]
+            for row in grid_rows:
+                st = bold_c if row[0] == 'TOTAL' else cell_c
+                data.append([P(row[0], bold_l)] + [P(v, st) for v in row[1:]])
+            t = Table(data, colWidths=day_w, rowHeights=[None] + [row_h] * len(grid_rows))
+            t.setStyle(TableStyle(grid))
+            story.append(KeepTogether([Paragraph(grid_title, sec_c), t]))
 
 
-    story.append(Paragraph(_esc(LEGEND), legend_s))
-    story.append(Spacer(1, 0.9*cm))
-    story.append(Paragraph('______________________________', sig_s))
-    story.append(Paragraph('<i>Signature over Printed Name</i>', sig_s))
+        story.append(Paragraph(_esc(LEGEND), legend_s))
+        story.append(Spacer(1, 0.9*cm))
+        story.append(Paragraph('______________________________', sig_s))
+        story.append(Paragraph('<i>Signature over Printed Name</i>', sig_s))
 
 
+    export_style.rl_apply(story)         # Arial, >= 12 pt
     doc.build(story)
     buf.seek(0)
     return buf.read()

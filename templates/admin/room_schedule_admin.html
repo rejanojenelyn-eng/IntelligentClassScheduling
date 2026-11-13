@@ -1,6 +1,7 @@
 {% extends "admin/base_admin.html" %}
 
 {% block head %}
+<script>window.DSS_LIVE_SCHEDULE = true;  /* live_updates.js: show schedule changes from other devices */</script>
 {{ super() }}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_grid.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/room_schedule_v2.css') }}">

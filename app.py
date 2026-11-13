@@ -31,6 +31,7 @@ import password_reset as _pwreset
 import login_security as _loginsec
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
+import export_style as _export_style
 import qr_poster as _qr_poster
 from database import get_db_connection, query_db, load_scheduler_config
 from config import Config
@@ -1092,8 +1093,13 @@ def _expire_stale_session():
     # last_seen older than SESSION_CLOSED_LIMIT — logging the user out mid-work.
     g.session_seen = True
     # A heartbeat only counts as activity when the user actually did something.
-    g.session_active = (request.endpoint != 'session_heartbeat'
-                        or bool((request.get_json(silent=True) or {}).get('active')))
+    # The live-updates poll (every few seconds, by itself) is never activity either —
+    # otherwise an open page would keep an idle login alive past SESSION_IDLE_LIMIT.
+    if request.endpoint == 'api_live_schedule_rev':
+        g.session_active = False
+    else:
+        g.session_active = (request.endpoint != 'session_heartbeat'
+                            or bool((request.get_json(silent=True) or {}).get('active')))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1901,6 +1907,8 @@ def _audit_request_data():
 @app.before_request
 def _audit_before():
     ep = request.endpoint
+    if ep in _LIVE_SCHEDULE_ENDPOINTS:
+        g._audit_flashes = []   # an error flash must also stop the live-update bump
     if ep not in _AUDIT_ROUTES or (request.method in _CSRF_SAFE_METHODS and ep not in _AUDIT_GET_ROUTES):
         return
     g._audit_flashes = []
@@ -1967,6 +1975,126 @@ def _audit_after(resp):
     except Exception as e:      # an audit problem never breaks the response
         print(f"[audit] {ep}: {type(e).__name__}: {e}")
     return resp
+
+
+# ─────────────────────────────────────────────────────────────
+#  LIVE SCHEDULE UPDATES (other devices / tabs see changes without reloading)
+# ─────────────────────────────────────────────────────────────
+# One revision number for "the schedules changed". Every successful request to an
+# endpoint below raises it, recording who did it and from which open page (X-Page-Id,
+# sent by csrf.js from session_guard.js's page id). Open schedule pages poll
+# /api/live/schedule_rev every few seconds (static/js/live_updates.js) and refresh when
+# the revision moved because of ANOTHER page. Polling, not WebSockets/SSE: the app runs
+# one gunicorn worker with 8 threads, and a held-open stream per page would use them up.
+LIVE_SCHEDULE_REV_DDL = """
+    CREATE TABLE IF NOT EXISTS public.schedule_live_rev (
+        id          SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        rev         BIGINT       NOT NULL DEFAULT 0,
+        changed_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
+        changed_by  VARCHAR(100),
+        changer_name VARCHAR(150),
+        page_id     VARCHAR(64),
+        action      VARCHAR(100),
+        scope       VARCHAR(200)
+    );
+    INSERT INTO public.schedule_live_rev (id, rev) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+"""
+_LIVE_SCHEDULE_ENDPOINTS = {
+    'api_save_draft': 'saved a Draft', 'api_approve_schedule': 'published a schedule',
+    'api_delete_session': 'deleted a schedule session', 'api_delete_draft': 'deleted a Draft',
+    'api_restore_version': 'restored a schedule version',
+    'api_archive_draft_for_editor': 'moved a Draft to the Manual Editor',
+    'api_schedule_list_release': 'released schedules', 'api_schedule_list_delete': 'deleted schedules',
+    'import_schedule': 'imported a schedule', 'sis_import_confirm': 'imported an SIS schedule',
+    'api_save_local_arrangement': 'saved a Local arrangement',
+    'api_publish_local_arrangement': 'published a Local arrangement',
+    'api_deactivate_local_arrangement': 'deactivated a Local arrangement',
+    'api_discard_local_draft': 'discarded a Local draft',
+    'api_restore_local_arrangement': 'restored a Local arrangement',
+    'api_manual_save_assignment': 'assigned a faculty', 'api_manual_delete_assignment': 'removed a faculty assignment',
+    'api_manual_own_makeup': 'scheduled a make-up class', 'api_manual_own_makeup_cancel': 'cancelled a make-up class',
+    'api_requests_decide': 'decided a faculty request',
+    'api_manual_add_section': 'added a section', 'api_manual_set_section_curriculum': "changed a section's curriculum",
+    'api_create_merge_group': 'created a Merge Group', 'api_update_merge_group': 'updated a Merge Group',
+    'api_set_merge_group_active': 'changed a Merge Group', 'api_delete_merge_group': 'deleted a Merge Group',
+    'api_create_merge_set': 'created a Merge Group', 'api_remove_merge_group_member': 'unmerged a section',
+    'api_merge_group_discovery_confirm': 'imported Merge Groups',
+}
+_live_rev_ready = False
+
+
+def _ensure_live_rev_table():
+    global _live_rev_ready
+    if _live_rev_ready:
+        return
+    conn = get_db_connection(); cur = conn.cursor()
+    try:
+        cur.execute(LIVE_SCHEDULE_REV_DDL)
+        conn.commit()
+        _live_rev_ready = True
+    finally:
+        cur.close(); conn.close()
+
+
+def _live_scope_text():
+    d = request.get_json(silent=True) if request.is_json else None
+    d = d if isinstance(d, dict) else {}
+    ctx = d.get('context') if isinstance(d.get('context'), dict) else {}
+    prog = d.get('program') or ctx.get('program') or ''
+    yl = d.get('year_level') or d.get('yearLevel') or ctx.get('yearLevel') or ''
+    parts = [str(prog).upper()] if prog else []
+    if yl:
+        parts.append(f'Year {yl}')
+    return ' '.join(parts)[:200]
+
+
+@app.after_request
+def _live_bump(resp):
+    ep = request.endpoint
+    if ep not in _LIVE_SCHEDULE_ENDPOINTS or request.method in _CSRF_SAFE_METHODS:
+        return resp
+    try:
+        if not session.get('loggedin') or not _audit_succeeded(resp):
+            return resp
+        _ensure_live_rev_table()
+        who = _session_identity()
+        conn = get_db_connection(); cur = conn.cursor()
+        try:
+            cur.execute("""
+                UPDATE public.schedule_live_rev
+                SET rev = rev + 1, changed_at = NOW(), changed_by = %s, changer_name = %s,
+                    page_id = %s, action = %s, scope = %s
+                WHERE id = 1
+            """, (who['user'][:100], (who['name'] or who['user'])[:150],
+                  (request.headers.get('X-Page-Id') or '')[:64], _LIVE_SCHEDULE_ENDPOINTS[ep][:100],
+                  _live_scope_text()))
+            conn.commit()
+        finally:
+            cur.close(); conn.close()
+    except Exception as e:      # live updates are a convenience: never break the response
+        print(f"[live] {ep}: {type(e).__name__}: {e}")
+    return resp
+
+
+@app.route('/api/live/schedule_rev')
+@roles_required(*STAFF_ROLES)   # only Admin / Academic Head schedule pages use live updates
+def api_live_schedule_rev():
+    """{rev, mine, by, action, scope, at}. mine = the last change came from the asking page
+    itself (its own save), so it must not refresh itself or say 'changed by someone'."""
+    if not session.get('loggedin'):
+        return jsonify({'success': False}), 401
+    try:
+        _ensure_live_rev_table()
+        r = query_db("SELECT rev, changed_by, changer_name, page_id, action, scope, "
+                     "TO_CHAR(changed_at, 'HH12:MI AM') AS at FROM public.schedule_live_rev WHERE id = 1",
+                     one=True) or {}
+    except Exception as e:
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    page = (request.headers.get('X-Page-Id') or '')[:64]
+    return jsonify({'success': True, 'rev': int(r.get('rev') or 0),
+                    'mine': bool(page) and page == (r.get('page_id') or ''),
+                    'by': r.get('changer_name') or r.get('changed_by') or '',
+                    'action': r.get('action') or '', 'scope': r.get('scope') or '', 'at': r.get('at') or ''})
 
 # --- CONTEXT PROCESSOR FOR LOGGED-IN USER DISPLAY NAME ---
 @app.context_processor
@@ -8845,10 +8973,14 @@ def export_schedule():
 # ══════════════════════════════════════════════════════════════
 
 
-def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, published_only=False):
+def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, published_only=False,
+                   include_unscheduled=True):
     """Return list of schedule rows (normalized + historical fallback).
     published_only=True leaves Draft versions out (the Faculty Class Schedule and
     its export show only what is Published).
+    include_unscheduled=True (default) also lists each section's subjects that have no
+    schedule yet, with TBA instructor/day/time/room (_sch_unscheduled_rows) — the Room
+    Schedule callers turn it off (a subject with no room belongs to no room).
 
     When merge=True (default), collapses multiple schedule_sessions rows per
     subject offering into one (used by Table View exports). When merge=False,
@@ -9039,7 +9171,95 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
     hist_codes     = {r['SubjectCode'] for r in hist_rows}
     norm_untimed   = [r for r in current_rows if not r['Time'] and r['SubjectCode'] not in hist_codes]
     combined = norm_timed + hist_extra + norm_untimed
+    if include_unscheduled:
+        combined += _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, combined)
     return _sch_merge_session_rows(combined) if merge else combined
+
+
+def _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, rows):
+    """Class Schedule rows for the subjects a section must take this term but that have
+    no schedule yet — listed with TBA instructor / day / time / room so the export shows
+    the section's whole term, not only what is scheduled.
+
+    A section's subjects are the ones Schedule Generation loads for it
+    (scheduler.fetch_data): the Regular curriculum of its program / curriculum year /
+    year level / semester, or — for a section set "With Bridging" — only the Bridging
+    subjects. A term before the section's starting semester is skipped. Subjects already
+    in `rows` for that section and term (any source) are left out."""
+    if not ay_ids:
+        return []
+    from scheduler import REGULAR_CURRICULUM_SQL
+    where, args = ["sec.isactive IS NOT FALSE", "pyl.isactive IS NOT FALSE",
+                   f"ay.academicyearid IN ({','.join(['%s'] * len(ay_ids))})"], list(ay_ids)
+    if sem_types:
+        where.append(f"sem.semestertype IN ({','.join(['%s'] * len(sem_types))})"); args.extend(sem_types)
+    if programs:
+        where.append(f"UPPER(pyl.programcode) IN ({','.join(['%s'] * len(programs))})")
+        args.extend([p.upper() for p in programs])
+    if year_levels:
+        where.append(f"pyl.yearlevel IN ({','.join(['%s'] * len(year_levels))})")
+        args.extend([int(y) for y in year_levels])
+    cur.execute("""
+        SELECT sec.sectionid, sec.sectionname, sec.withbridging, sec.start_semestertype,
+               pyl.programcode, pyl.yearlevel, c.curriculumyear, sem.semestertype,
+               ay.yearstart || '-' || ay.yearend AS ay_label
+        FROM sections sec
+        JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        JOIN curriculum c          ON c.curriculumid = pyl.curriculumid
+        JOIN academicyear ay       ON ay.academicyearid = pyl.academicyearid
+        JOIN semester sem          ON sem.academicyearid = ay.academicyearid
+        WHERE """ + " AND ".join(where) + """
+        ORDER BY pyl.programcode, pyl.yearlevel, sec.sectionname, sem.semestertype""", args)
+    terms = cur.fetchall()
+    if not terms:
+        return []
+
+    def _k(*parts):
+        return tuple(str(p or '').strip().upper() for p in parts)
+    have = set()
+    for r in rows:
+        code = r.get('SubjectCode')
+        if r.get('SectionID') is not None:
+            have.add(('id', str(r['SectionID'])) + _k(code, r.get('AcademicYear'), r.get('SemesterType')))
+        have.add(('name',) + _k(r.get('Section'), code, r.get('AcademicYear'), r.get('SemesterType')))
+
+    sem_order = {'A': 0, 'B': 1, 'C': 2}
+    cache, out = {}, []
+    for t in terms:
+        start = (t['start_semestertype'] or '').strip().upper()
+        if start in sem_order and sem_order.get(t['semestertype'], 0) < sem_order[start]:
+            continue
+        bridging = bool(t['withbridging'])
+        key = (t['programcode'].upper(), t['curriculumyear'], t['yearlevel'], t['semestertype'], bridging)
+        if key not in cache:
+            filt = ("c.curriculumtype = 'WITH_BRIDGING' AND cs.isbridging = TRUE" if bridging
+                    else REGULAR_CURRICULUM_SQL)
+            cur.execute("""
+                SELECT DISTINCT ON (UPPER(TRIM(cs.subjectcode)))
+                       TRIM(cs.subjectcode) AS code, cs.subjectname,
+                       COALESCE(cs.lecturehours, 0) AS lec, COALESCE(cs.laboratoryhours, 0) AS lab,
+                       COALESCE(cs.creditunits, 0) AS units
+                FROM curriculumsubject cs JOIN curriculum c ON cs.curriculumid = c.curriculumid
+                WHERE UPPER(c.programcode) = %s AND c.curriculumyear = %s
+                  AND cs.yearlevel = %s AND cs.semester = %s AND """ + filt + """
+                ORDER BY UPPER(TRIM(cs.subjectcode))""", key[:4])
+            cache[key] = cur.fetchall()
+        for s in cache[key]:
+            if (('id', str(t['sectionid'])) + _k(s['code'], t['ay_label'], t['semestertype'])) in have:
+                continue
+            if (('name',) + _k(t['sectionname'], s['code'], t['ay_label'], t['semestertype'])) in have:
+                continue
+            out.append({
+                'Instructor': 'TBA', 'SubjectCode': s['code'], 'SubjectName': s['subjectname'],
+                'LectureHours': s['lec'], 'LaboratoryHours': s['lab'], 'CreditUnits': s['units'],
+                'Program': t['programcode'], 'YearLevel': t['yearlevel'],
+                'Section': t['sectionname'], 'SectionID': t['sectionid'],
+                'Hours': (s['lec'] or 0) + (s['lab'] or 0),
+                'Day/s': None, 'Time': None, 'Room': 'TBA', 'RoomID': None,
+                'AcademicYear': t['ay_label'], 'SemesterType': t['semestertype'],
+                'OfficialSessionID': None, 'ScheduleSource': 'Unscheduled',
+            })
+    return out
 
 
 _SCH_WEEKDAY_ORDER = {'MONDAY': 0, 'TUESDAY': 1, 'WEDNESDAY': 2, 'THURSDAY': 3,
@@ -9453,7 +9673,9 @@ def _sch_calendar_html_grid(yl_rows, text_fn=None):
                 cells.append({'kind': 'class', 'lines': b['lines'], 'rowspan': b['rowspan'], 'colspan': b['colspan']})
             elif not occupied[ri][ci]:
                 cells.append({'kind': 'empty'})
-        grid_rows.append({'is_gap': is_gap, 'cells': cells})
+        # slot_start: first row of a standard time slice (7:30, 9:00, ...) — the preview
+        # draws a stronger line there so the slices read like the printed template.
+        grid_rows.append({'is_gap': is_gap, 'slot_start': ri in time_spans, 'cells': cells})
 
     return grid_rows, unscheduled
 
@@ -9959,6 +10181,7 @@ _SCH_OFF_YL_LBL  = {1: 'FIRST YEAR', 2: 'SECOND YEAR', 3: 'THIRD YEAR', 4: 'FOUR
 # reference in reports_preview.html) points at the same path.
 _SCH_LOGO_FILENAME = 'pup-logo.png'
 _SCH_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'img', _SCH_LOGO_FILENAME)
+_export_style.LOGO_PATH = _SCH_LOGO_PATH      # letterhead for exports that have none (export_style)
 
 # Column widths (cm) for the PDF/DOCX portrait table — Subject Description gets
 # the lion's share; the short numeric/code columns are trimmed to fit an A4
@@ -10160,8 +10383,152 @@ def _sch_gen_xlsx(rows, groups, sem_label='All Semesters', ay_label='', prog_nam
     ws.page_margins.top  = ws.page_margins.bottom = 0.5
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
+
+
+# ─────────────────────────────────────────────────────────────
+#  EXPORT PAGE ORIENTATION (Reports → Export: Auto / Portrait / Landscape)
+# ─────────────────────────────────────────────────────────────
+# Every PDF / Word report generator keeps its own natural page ("Auto"). When the user
+# picks Portrait or Landscape, the export route sets g._export_orient and:
+#   PDF  — _rl_doc() builds the document on the turned page and rescales every table's
+#          column widths to the new usable width (nested tables follow their parent),
+#          so a table fills the wider page / fits the narrower one instead of leaving a
+#          blank strip or running off the edge;
+#   Word — _docx_apply_orientation() turns each section and rescales every table's
+#          grid / cell widths the same way, just before the file is saved.
+def _export_orientation():
+    try:
+        o = getattr(g, '_export_orient', None)
+    except RuntimeError:        # outside a request
+        o = None
+    return o if o in ('portrait', 'landscape') else None
+
+
+_RL_MIN_COL = 46   # pt (~1.6 cm): a narrow column (TIME, Day, Year…) never shrinks below this
+
+
+def _rl_fit_widths(widths, avail):
+    """Column widths resized to sum to avail. When shrinking, narrow columns keep a
+    readable minimum (e.g. "10:30-12:00" stays on one line) and the wide columns give up
+    the difference; when growing, every column grows by the same factor."""
+    total = float(sum(widths))
+    f = avail / total
+    new = [w * f for w in widths]
+    if f >= 1:
+        return new
+    floors = {i: min(w, _RL_MIN_COL) for i, w in enumerate(widths) if w * f < min(w, _RL_MIN_COL)}
+    if not floors:
+        return new
+    rest = avail - sum(floors.values())
+    others = sum(w for i, w in enumerate(widths) if i not in floors)
+    if rest <= 0 or others <= 0:
+        return new                              # can't protect them: plain scaling
+    return [floors[i] if i in floors else w * rest / others for i, w in enumerate(widths)]
+
+
+def _rl_scale_table(t, factor_or_widths):
+    widths = getattr(t, '_argW', None)
+    if not widths or not all(isinstance(w, (int, float)) for w in widths):
+        return
+    new = (list(factor_or_widths) if isinstance(factor_or_widths, (list, tuple))
+           else [w * factor_or_widths for w in widths])
+    t._argW = t._colWidths = new
+    # A table inside a cell follows the change of the column it sits in.
+    col_f = [n / o if o else 1 for n, o in zip(new, widths)]
+    for row in getattr(t, '_cellvalues', []) or []:
+        for ci, cell in enumerate(row):
+            for item in (cell if isinstance(cell, (list, tuple)) else [cell]):
+                if hasattr(item, '_argW') and hasattr(item, '_cellvalues') and ci < len(col_f):
+                    _rl_scale_table(item, col_f[ci])
+
+
+def _rl_fit_tables(flowables, avail, stretch):
+    """Rescale top-level tables to the frame width: always when they are wider than it,
+    and — after an orientation change — also when they are narrower (fill the page)."""
+    for f in flowables or []:
+        inner = getattr(f, '_content', None)       # KeepTogether and similar wrappers
+        if isinstance(inner, (list, tuple)):
+            _rl_fit_tables(inner, avail, stretch)
+            continue
+        widths = getattr(f, '_argW', None)
+        if not (hasattr(f, '_cellvalues') and widths and all(isinstance(w, (int, float)) for w in widths)):
+            continue
+        total = float(sum(widths))
+        if total <= 0:
+            continue
+        if total > avail + 0.5 or (stretch and total < avail * 0.97 and total > avail * 0.45):
+            _rl_scale_table(f, _rl_fit_widths(widths, avail))
+
+
+def _rl_doc(buf, pagesize=None, **kw):
+    """SimpleDocTemplate on the chosen orientation (Auto keeps pagesize as given)."""
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.lib.pagesizes import A4
+    pagesize = tuple(pagesize or A4)
+    want = _export_orientation()
+    w, h = pagesize
+    if (want == 'landscape' and w < h) or (want == 'portrait' and w > h):
+        pagesize = (h, w)
+    turned = pagesize[0] != w
+
+    class _OrientedDoc(SimpleDocTemplate):
+        def build(self, flowables, *a, **k):
+            # Final column widths first, then the house style (Arial, >= 12 pt), which
+            # sizes fixed-height rows to the text at those widths.
+            _rl_fit_tables(flowables, self.width, stretch=turned)
+            _export_style.rl_apply(flowables)
+            return super().build(flowables, *a, **k)
+
+    return _OrientedDoc(buf, pagesize=pagesize, **kw)
+
+
+def _docx_apply_orientation(doc):
+    # Every Word export is saved right after this hook: apply the house export style
+    # (Arial, >= 12 pt) here too.
+    _export_style.docx_apply(doc)
+    want = _export_orientation()
+    if not want:
+        return
+    from docx.enum.section import WD_ORIENT
+    from docx.oxml.ns import qn
+    factor = None
+    for sec in doc.sections:
+        w, h = sec.page_width, sec.page_height
+        if not w or not h or (want == 'landscape') == (w > h):
+            continue
+        old_usable = w - (sec.left_margin or 0) - (sec.right_margin or 0)
+        sec.page_width, sec.page_height = h, w
+        sec.orientation = WD_ORIENT.LANDSCAPE if want == 'landscape' else WD_ORIENT.PORTRAIT
+        new_usable = h - (sec.left_margin or 0) - (sec.right_margin or 0)
+        if factor is None and old_usable > 0:
+            factor = new_usable / old_usable
+    if not factor or abs(factor - 1) < 0.01:
+        return
+    body = doc.element.body
+    for tag in ('w:gridCol', 'w:tcW', 'w:tblW'):
+        for el in body.iter(qn(tag)):
+            typ = el.get(qn('w:type'))
+            if tag != 'w:gridCol' and typ not in (None, 'dxa'):
+                continue                           # pct / auto widths follow the page by themselves
+            val = el.get(qn('w:w'))
+            if val and val.lstrip('-').isdigit():
+                el.set(qn('w:w'), str(int(round(int(val) * factor))))
+
+
+# The Faculty Assignment form generators (teaching_assignment_export.py) follow the same
+# orientation choice when the Reports export renders them (Subject/Faculty Assignment).
+# Without a chosen orientation both hooks leave the form exactly as before.
+_ta_export.PDF_DOC_FACTORY = _rl_doc
+_ta_export.DOCX_HOOK = _docx_apply_orientation
+
+
+def _xlsx_finalize(wb):
+    """Every Excel export passes through this right before wb.save(): Arial, >= 12 pt,
+    letterhead logo centered over the sheet (export_style.xlsx_apply)."""
+    _export_style.xlsx_apply(wb)
+    return wb
 
 
 def _sch_gen_docx(rows, groups, sem_label='All Semesters', ay_label='', prog_names=None):
@@ -10309,7 +10676,7 @@ def _sch_gen_docx(rows, groups, sem_label='All Semesters', ay_label='', prog_nam
                     doc.add_paragraph()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -10323,7 +10690,7 @@ def _sch_gen_pdf(rows, groups, sem_label='All Semesters', ay_label='', prog_name
     from xml.sax.saxutils import escape as _xml_escape
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
+    doc = _rl_doc(buf, pagesize=A4,
                             leftMargin=1.0*cm, rightMargin=1.0*cm,
                             topMargin=1.0*cm, bottomMargin=1.0*cm)
 
@@ -10571,7 +10938,7 @@ def _sch_gen_xlsx_calendar(rows, groups, sem_label='All Semesters', ay_label='',
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -10772,7 +11139,7 @@ def _sch_gen_docx_calendar(rows, groups, sem_label='All Semesters', ay_label='',
                     doc.add_page_break()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -10788,7 +11155,7 @@ def _sch_gen_pdf_calendar(rows, groups, sem_label='All Semesters', ay_label='', 
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
+    doc = _rl_doc(buf, pagesize=A4,
                             leftMargin=1.3*cm, rightMargin=1.3*cm,
                             topMargin=1.2*cm, bottomMargin=1.2*cm)
 
@@ -11194,7 +11561,7 @@ def _room_report_gen_xlsx(groups, sem_label='All Semesters', ay_label=''):
     ws.page_margins.top  = ws.page_margins.bottom = 0.5
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -11296,7 +11663,7 @@ def _room_report_gen_docx(groups, sem_label='All Semesters', ay_label=''):
             doc.add_paragraph()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -11310,7 +11677,7 @@ def _room_report_gen_pdf(groups, sem_label='All Semesters', ay_label=''):
     from xml.sax.saxutils import escape as _xml_escape
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+    doc = _rl_doc(buf, pagesize=landscape(A4),
                             leftMargin=1.0*cm, rightMargin=1.0*cm,
                             topMargin=1.0*cm, bottomMargin=1.0*cm)
 
@@ -11497,7 +11864,7 @@ def _room_report_gen_xlsx_calendar(groups, sem_label='All Semesters', ay_label='
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -11640,7 +12007,7 @@ def _room_report_gen_docx_calendar(groups, sem_label='All Semesters', ay_label='
             doc.add_paragraph()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -11656,7 +12023,7 @@ def _room_report_gen_pdf_calendar(groups, sem_label='All Semesters', ay_label=''
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+    doc = _rl_doc(buf, pagesize=landscape(A4),
                             leftMargin=1.3*cm, rightMargin=1.3*cm,
                             topMargin=1.2*cm, bottomMargin=1.2*cm)
 
@@ -11874,7 +12241,7 @@ def _room_gen_xlsx_calendar(room_groups, sem_label='All Semesters', ay_label='')
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -12030,7 +12397,7 @@ def _room_gen_docx_calendar(room_groups, sem_label='All Semesters', ay_label='')
             doc.add_page_break()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -12046,7 +12413,7 @@ def _room_gen_pdf_calendar(room_groups, sem_label='All Semesters', ay_label=''):
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
+    doc = _rl_doc(buf, pagesize=A4,
                             leftMargin=1.3*cm, rightMargin=1.3*cm,
                             topMargin=1.2*cm, bottomMargin=1.2*cm)
 
@@ -12154,7 +12521,7 @@ _FACSUB_TYPE_LABELS = {
 }
 
 
-def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
+def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types, emp_nums=None):
     """Faculty/Subject Assignment Export: one row per schedule assignment
     (subject+section+semester+employee), joined to faculty type for grouping.
     Ended semesters with no live schedule come from historical_data (rows whose
@@ -12167,6 +12534,8 @@ def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
         nf.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); params.extend(sem_types)
     if faculty_types:
         nf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})"); params.extend(faculty_types)
+    if emp_nums:   # chosen faculty only (empty = everyone of the selected types)
+        nf.append("f.employeenumber = ANY(%s)"); params.append([str(e) for e in emp_nums])
 
     q = """
         SELECT
@@ -12213,6 +12582,8 @@ def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
         hf.append(f"sem.semestertype IN ({','.join(['%s']*len(sem_types))})"); hp.extend(sem_types)
     if faculty_types:
         hf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})"); hp.extend(faculty_types)
+    if emp_nums:
+        hf.append("f.employeenumber = ANY(%s)"); hp.append([str(e) for e in emp_nums])
     live_sems = {r['SemesterID'] for r in rows}
     if live_sems:
         hf.append(f"hd.semesterid NOT IN ({','.join(['%s']*len(live_sems))})"); hp.extend(live_sems)
@@ -12245,7 +12616,7 @@ def _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types):
     return rows
 
 
-def _facsub_roster_fetch(cur, faculty_types):
+def _facsub_roster_fetch(cur, faculty_types, emp_nums=None):
     """All active faculty matching the selected type(s), independent of
     Academic Year/Semester — so faculty with no assigned load this period
     still appear in the report."""
@@ -12253,6 +12624,9 @@ def _facsub_roster_fetch(cur, faculty_types):
     if faculty_types:
         nf.append(f"et.typename IN ({','.join(['%s']*len(faculty_types))})")
         params.extend(faculty_types)
+    if emp_nums:
+        nf.append("f.employeenumber = ANY(%s)")
+        params.append([str(e) for e in emp_nums])
     where = f"WHERE {' AND '.join(nf)}" if nf else ""
     q = f"""
         SELECT
@@ -12434,7 +12808,7 @@ def _facsub_gen_xlsx(groups, sem_label='All Semesters', ay_label=''):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -12546,7 +12920,7 @@ def _facsub_gen_docx(groups, sem_label='All Semesters', ay_label=''):
                 _cell_text(name_cell, fac['name'], sz=9, fill=fill)
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -12559,7 +12933,7 @@ def _facsub_gen_pdf(groups, sem_label='All Semesters', ay_label=''):
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
+    doc = _rl_doc(buf, pagesize=A4,
                             leftMargin=1.5*cm, rightMargin=1.5*cm,
                             topMargin=1.5*cm, bottomMargin=1.5*cm)
 
@@ -12656,11 +13030,12 @@ def facsub_export_count():
     ay_ids        = data.get('ay_ids', [])
     sem_types     = data.get('sem_types', [])
     faculty_types = data.get('faculty_types', [])
+    emp_nums      = [str(e) for e in (data.get('employee_numbers') or []) if str(e).strip()]
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        roster = _facsub_roster_fetch(cur, faculty_types)
-        rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
+        roster = _facsub_roster_fetch(cur, faculty_types, emp_nums)
+        rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types, emp_nums)
         return jsonify({'count': len(rows), 'faculty': len(roster)})
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -12669,12 +13044,12 @@ def facsub_export_count():
         cur.close(); conn.close()
 
 
-def _facsub_report_context(cur, ay_ids, sem_types, faculty_types):
+def _facsub_report_context(cur, ay_ids, sem_types, faculty_types, emp_nums=None):
     """Fetch + group Subject/Faculty Assignment rows and the header's semester/AY text.
     Shared by the Reports preview, the preview's Export, and the direct export below,
     so what the preview shows is exactly what gets exported."""
-    roster = _facsub_roster_fetch(cur, faculty_types)
-    rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types)
+    roster = _facsub_roster_fetch(cur, faculty_types, emp_nums)
+    rows   = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types, emp_nums)
     groups = _facsub_exp_groups(roster, rows)
 
     # Derive the header's semester/AY text from the user's actual selection
@@ -12696,21 +13071,64 @@ def _facsub_report_context(cur, ay_ids, sem_types, faculty_types):
     return rows, groups, sem_label, ay_label
 
 
-def _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename):
-    """One file (or a .zip of several formats) of the Subject/Faculty Assignment report."""
-    rows, groups, sem_label, ay_label = _facsub_report_context(cur, ay_ids, sem_types, faculty_types)
-    mime_map = {
-        'csv':  ('text/csv', '.csv'),
-        'xlsx': ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'),
-        'docx': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
-        'pdf':  ('application/pdf', '.pdf'),
-    }
-    gen_map = {
-        'csv':  lambda: _facsub_gen_csv(groups, sem_label, ay_label),
-        'xlsx': lambda: _facsub_gen_xlsx(groups, sem_label, ay_label),
-        'docx': lambda: _facsub_gen_docx(groups, sem_label, ay_label),
-        'pdf':  lambda: _facsub_gen_pdf(groups, sem_label, ay_label),
-    }
+def _facsub_ta_payloads(cur, ay_ids, sem_types, faculty_types, emp_nums=None):
+    """The Faculty Assignment form payload (the same one the faculty's own Teaching
+    Assignment export uses — _my_teaching_load_payload) for every faculty in the report,
+    one per selected Academic Year × Semester. Faculty with no load in a period are left
+    out, unless they were chosen by name. Ordered Designee → Part-time → Regular, then name."""
+    roster = _facsub_roster_fetch(cur, faculty_types, emp_nums)
+    rows = _facsub_exp_fetch(cur, ay_ids, sem_types, faculty_types, emp_nums)
+    with_load = {str(r.get('EmpNum')) for r in rows}
+    chosen = {str(e) for e in (emp_nums or [])}
+    if ay_ids:
+        cur.execute("SELECT academicyearid FROM academicyear WHERE academicyearid = ANY(%s) ORDER BY yearstart",
+                    (list(ay_ids),))
+        ays = [r['academicyearid'] for r in cur.fetchall()]
+    else:
+        ays = []
+    sems = sorted(sem_types or [], key=lambda s: _SCH_SEM_ORDER.get(s, 9))
+    out = []
+    for fac in roster:
+        emp = str(fac.get('EmpNum') or '')
+        if not emp or (emp not in with_load and emp not in chosen):
+            continue
+        for ay in ays:
+            for sem in sems:
+                p, err = _my_teaching_load_payload(cur, emp, ay, sem, 'official')
+                if err or not p:
+                    continue
+                if not (p.get('regular') or p.get('partTime')) and emp not in chosen:
+                    continue
+                out.append(p)
+    return out
+
+
+def _facsub_form_view(p):
+    """A Faculty Assignment form payload laid out for the Reports preview (HTML), built
+    with the same helpers as the PDF/Word/Excel form, so the preview matches the file."""
+    T = _ta_export
+    secs = []
+    for title, rws, total_lbl, total in T._sections(p):
+        body = [T._load_row(r) for r in rws]
+        secs.append({'title': title, 'rows': body, 'blank': max(0, T.MIN_LOAD_ROWS - len(body)),
+                     'total_label': total_lbl, 'total': T._num(total)})
+    ts = T._ts_line(p)
+    return {'title_lines': T._title_lines(p), 'info': T._info_rows(p), 'sections': secs,
+            'ts': (ts[0], T._num(ts[1])) if ts else None,
+            'per_day': T._per_day_rows(p), 'official': T._official_rows(),
+            'headers': T.LOAD_HEADERS, 'center': sorted(T.LOAD_CENTER),
+            'day_headers': T.DAY_HEADERS, 'legend': T.LEGEND, 'campus': T.CAMPUS}
+
+
+def _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename, emp_nums=None):
+    """One file (or a .zip of several formats) of the Subject/Faculty Assignment report —
+    one official Faculty Assignment form per faculty, the same design as the faculty's own
+    Teaching Assignment export (teaching_assignment_export.py)."""
+    payloads = _facsub_ta_payloads(cur, ay_ids, sem_types, faculty_types, emp_nums)
+    if not payloads:
+        return jsonify({'error': 'No faculty with a published teaching load for the selected filters.'}), 404
+    mime_map = {f: _ta_export.MIME[f] for f in ('csv', 'xlsx', 'docx', 'pdf')}
+    gen_map = {f: (lambda f=f: _ta_export.GENERATORS[f](payloads, _SCH_LOGO_PATH)) for f in mime_map}
 
     if len(formats) == 1:
         fmt = formats[0]
@@ -12748,7 +13166,8 @@ def facsub_export():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        return _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename)
+        return _facsub_export_response(cur, ay_ids, sem_types, faculty_types, formats, filename,
+                                       [str(e) for e in (data.get('employee_numbers') or []) if str(e).strip()])
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': _public_error(e)}), 500
@@ -24153,7 +24572,9 @@ def reports():
     if 'loggedin' not in session: return redirect(url_for('login'))
     ay_list         = query_db("SELECT academicyearid, yearstart, yearend FROM academicyear ORDER BY yearstart DESC")
     programs        = query_db("SELECT programcode, programname FROM programs WHERE isactive = TRUE ORDER BY programname")
-    faculty         = query_db("SELECT employeenumber, lastname || ', ' || firstname AS fullname FROM faculty ORDER BY lastname, firstname")
+    faculty         = query_db("SELECT f.employeenumber, f.lastname || ', ' || f.firstname AS fullname, et.typename "
+                               "FROM faculty f LEFT JOIN employeetype et ON et.employeetypeid = f.employeetypeid "
+                               "ORDER BY f.lastname, f.firstname")
     curricula       = query_db("SELECT c.curriculumid, c.curriculumcode, c.curriculumyear, p.programcode AS programcode FROM curriculum c JOIN programs p ON c.programcode = p.programcode ORDER BY p.programcode, c.curriculumyear DESC")
     emp_types       = query_db("SELECT employeetypeid, typename FROM employeetype ORDER BY typename")
     specializations = query_db("SELECT specializationid, specializationname FROM specialization ORDER BY specializationname")
@@ -24440,7 +24861,7 @@ def _build_employee_docx():
                     run.font.size = Pt(9)
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -24557,7 +24978,7 @@ def _build_employee_xlsx():
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -24629,7 +25050,7 @@ def _build_archived_employee_docx():
                     run.font.size = Pt(9)
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -24707,7 +25128,7 @@ def _build_archived_employee_xlsx():
     for ci, w in enumerate([5, 28, 26, 32, 18, 20, 14, 16], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -24960,7 +25381,7 @@ def _build_curriculum_docx():
 
                 doc.add_paragraph()
 
-    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -25073,7 +25494,7 @@ def _build_curriculum_xlsx():
             ws.column_dimensions[get_column_letter(ci)].width = w
         ws.freeze_panes = 'A5'
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -26507,7 +26928,7 @@ def _build_rooms_docx():
             _sr(tot[2].paragraphs[0].runs[0], bold=True, size=10)
         tot[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -26587,7 +27008,7 @@ def _build_rooms_xlsx():
             ws.column_dimensions[get_column_letter(ci)].width = w
         ws.freeze_panes = 'A5'
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO(); _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return Response(
         buf.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -26616,7 +27037,7 @@ def room_schedule_export_count():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False)
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False, include_unscheduled=False)
         groups = _room_exp_groups(rows)
         return jsonify({'count': len(rows), 'rooms': len(groups)})
     except Exception as e:
@@ -26642,7 +27063,7 @@ def room_schedule_export():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False)
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, [], [], merge=False, include_unscheduled=False)
         groups = _room_exp_groups(rows)
 
         sem_map   = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
@@ -31625,7 +32046,7 @@ def _generic_gen_xlsx(title, columns, rows, campus_header=False):
         ws.column_dimensions[get_column_letter(ci)].width = min(max_len + 4, 40)
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -31640,7 +32061,7 @@ def _generic_gen_pdf(title, columns, rows, filters_text='', campus_header=False)
     buf = io.BytesIO()
     # Use landscape for wide tables (>5 columns)
     page = landscape(A4) if len(columns) > 5 else A4
-    doc = SimpleDocTemplate(buf, pagesize=page,
+    doc = _rl_doc(buf, pagesize=page,
                             leftMargin=1.5*cm, rightMargin=1.5*cm,
                             topMargin=1.5*cm, bottomMargin=1.5*cm)
 
@@ -31845,7 +32266,7 @@ def _generic_gen_docx(title, columns, rows, filters_text='', campus_header=False
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -32162,7 +32583,7 @@ def _curr_report_gen_xlsx(programs):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -32286,7 +32707,7 @@ def _curr_report_gen_docx(programs):
                     doc.add_paragraph()
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -32302,7 +32723,7 @@ def _curr_report_gen_pdf(programs):
 
     buf = io.BytesIO()
     PAGE = landscape(A4)  # 11 columns need the extra width portrait can't give
-    doc = SimpleDocTemplate(buf, pagesize=PAGE, leftMargin=1.5*cm, rightMargin=1.5*cm,
+    doc = _rl_doc(buf, pagesize=PAGE, leftMargin=1.5*cm, rightMargin=1.5*cm,
                             topMargin=1.3*cm, bottomMargin=1.3*cm)
 
     BLACK  = colors.black
@@ -32585,7 +33006,7 @@ def _bldg_report_gen_xlsx(buildings):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    _xlsx_finalize(wb); wb.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -32674,7 +33095,7 @@ def _bldg_report_gen_docx(buildings):
             merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
     return buf.read()
 
 
@@ -32689,7 +33110,7 @@ def _bldg_report_gen_pdf(buildings):
     from reportlab.pdfbase.pdfmetrics import stringWidth
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm,
+    doc = _rl_doc(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm,
                             topMargin=1.3*cm, bottomMargin=1.3*cm)
 
     BLACK  = colors.black
@@ -33213,6 +33634,7 @@ def report_preview(report_type):
         'room_type':request.args.get('room_type'),
         'layout':   request.args.get('layout'),
         'faculty_types':  request.args.getlist('faculty_types'),
+        'employee_numbers': request.args.getlist('employee_numbers'),   # Subject/Faculty: chosen faculty
     }
     # Remove empty values so JS payload is clean
     filter_params = {k: v for k, v in params.items() if v}
@@ -33247,6 +33669,7 @@ def report_preview(report_type):
     # generic flat one-row-per-room table.
     bldg_groups = []
     facsub_groups, facsub_title_lines = [], []
+    facsub_forms = []
 
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
@@ -33384,14 +33807,13 @@ def report_preview(report_type):
             if session.get('role') in _FACSUB_ROLES:
                 ay_ids    = _as_list(params.get('ay_ids'))
                 sem_types = _as_list(params.get('sem_types'))
-                rows, facsub_groups, fs_sem, fs_ay = _facsub_report_context(
-                    cur, ay_ids, sem_types, _as_list(params.get('faculty_types')))
-                facsub_groups = [g for g in facsub_groups if g['faculty']]
-                facsub_title_lines = _facsub_official_title_lines(fs_sem, fs_ay)
-                for g in facsub_groups:
-                    for fac in g['faculty']:
-                        fac['cells'] = [[r.get('SubjectCode') or '', r.get('SubjectDescription') or '',
-                                         _facsub_course_label(r), r.get('Hours') or 0] for r in fac['rows']]
+                # One official Faculty Assignment form per faculty — the same payloads
+                # and helpers the export (and the faculty's own export) render.
+                _payloads = _facsub_ta_payloads(
+                    cur, ay_ids, sem_types, _as_list(params.get('faculty_types')),
+                    _as_list(params.get('employee_numbers')))
+                facsub_forms = [_facsub_form_view(p) for p in _payloads]
+                rows = [r for p in _payloads for r in (p.get('regular') or []) + (p.get('partTime') or [])]
             columns, sections = [], None
         elif report_type == 'curriculum':
             programs_f     = _as_list(params.get('programs')) or ([params['prog']] if params.get('prog') else [])
@@ -33417,6 +33839,7 @@ def report_preview(report_type):
         curr_groups = []
         bldg_groups = []
         facsub_groups = []
+        facsub_forms = []
         import traceback; traceback.print_exc()
     finally:
         cur.close(); conn.close()
@@ -33521,9 +33944,21 @@ def report_preview(report_type):
         chip for (label, val, lkp) in chip_map
         if (chip := _rpt_chip(label, val, lkp))
     ]
+    # Subject/Faculty Assignment limited to chosen faculty: show their names.
+    _emp_sel = [str(e) for e in _as_list(params.get('employee_numbers'))]
+    emp_lookup = {}
+    if _emp_sel:
+        try:
+            emp_lookup = {str(r['employeenumber']): r['n'] for r in (query_db(
+                # "First Last" — the chip joins names with commas, so "Last, First" was ambiguous.
+                "SELECT employeenumber, TRIM(firstname || ' ' || lastname) AS n FROM faculty "
+                "WHERE employeenumber = ANY(%s)", (_emp_sel,)) or [])}
+        except Exception:
+            emp_lookup = {}
     # Multi-select filters (class_schedule / room_schedule checkboxes, and the
     # curriculum/rooms selector-modal *_ids) get their own comma-joined chips.
     multi_chip_map = [
+        ('Faculty',       params.get('employee_numbers'), emp_lookup),
         ('Academic Year', params.get('ay_ids'),         ay_lookup),
         ('Semester',      params.get('sem_types'),      SEM_LABEL),
         ('Program',       params.get('programs'),       prog_lookup),
@@ -33605,6 +34040,7 @@ def report_preview(report_type):
         # mirroring _facsub_gen_xlsx/docx/pdf.
         facsub_groups      = facsub_groups,
         facsub_title_lines = facsub_title_lines,
+        facsub_forms       = facsub_forms,      # Faculty Assignment forms (preview)
         # RPT_DATA dropdown sources for the "Modify Filters" panel — see fetch above.
         ay_list          = ay_list,
         programs         = programs,
@@ -33634,6 +34070,10 @@ def report_export(report_type):
     payload  = request.get_json() or {}
     formats  = [f.lower() for f in payload.get('formats', ['csv'])]
     filename = (payload.get('filename') or _RPT_FILENAMES.get(report_type, 'report')).strip()
+    # PDF / Word page orientation: 'portrait' | 'landscape'; anything else = each report's own
+    # page ("Auto"). Read by _rl_doc / _docx_apply_orientation.
+    _o = str(payload.get('orientation') or '').lower()
+    g._export_orient = _o if _o in ('portrait', 'landscape') else None
     for ext in ('.pdf','.docx','.xlsx','.csv','.zip'):
         if filename.lower().endswith(ext):
             filename = filename[:-len(ext)]
@@ -33669,6 +34109,9 @@ def report_export(report_type):
         'room':     payload.get('room'),
         'building': payload.get('building'),
         'room_type':payload.get('room_type'),
+        # Room Schedule reads its Table / Calendar choice from here; it was missing, so a
+        # Calendar-view preview always exported the table layout.
+        'layout':   payload.get('layout'),
     }
 
     if report_type == 'faculty_subject':
@@ -33678,7 +34121,8 @@ def report_export(report_type):
         cur  = conn.cursor(cursor_factory=RealDictCursor)
         try:
             return _facsub_export_response(cur, _as_list(payload.get('ay_ids')), _as_list(payload.get('sem_types')),
-                                           _as_list(payload.get('faculty_types')), formats, filename)
+                                           _as_list(payload.get('faculty_types')), formats, filename,
+                                           _as_list(payload.get('employee_numbers')))
         except Exception as e:
             import traceback; traceback.print_exc()
             return jsonify({'error': _public_error(e)}), 500

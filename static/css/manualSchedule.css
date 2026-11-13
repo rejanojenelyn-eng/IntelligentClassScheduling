@@ -880,6 +880,21 @@
 #gridWrapper .schedule-pill { user-select: none; -webkit-user-select: none; }
 #gridWrapper .schedule-pill.dnd-draggable { cursor: grab !important; }   /* pills set cursor inline */
 #gridWrapper .schedule-pill.dnd-source { opacity: 0.35; }
+/* Resize: the open slice's pill shows a grip at its top and bottom edge; dragging one
+   changes only the start or end time. */
+#gridWrapper .schedule-pill.dnd-draggable::before,
+#gridWrapper .schedule-pill.dnd-draggable::after {
+    content: ''; position: absolute; left: 50%; width: 26px; height: 3px; margin-left: -13px;
+    border-radius: 2px; background: rgba(255,255,255,0.8); box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
+    opacity: 0; transition: opacity .12s; pointer-events: none;
+}
+#gridWrapper .schedule-pill.dnd-draggable::before { top: 3px; }
+#gridWrapper .schedule-pill.dnd-draggable::after  { bottom: 3px; }
+#gridWrapper .schedule-pill.dnd-draggable:hover::before,
+#gridWrapper .schedule-pill.dnd-draggable:hover::after { opacity: 1; }
+#gridWrapper .schedule-pill.dnd-resize-edge { cursor: ns-resize !important; }
+#gridWrapper .schedule-pill.dnd-draggable:hover { transform: none; }   /* edges stay where the grips are */
+body.dnd-active.dnd-resizing, body.dnd-active.dnd-resizing * { cursor: ns-resize !important; }
 body.dnd-active, body.dnd-active * { cursor: grabbing !important; user-select: none !important; }
 body.dnd-active #gridWrapper .schedule-pill:hover { transform: none; }
 .dnd-ghost {
@@ -919,6 +934,11 @@ body.dnd-active #gridWrapper .schedule-pill:hover { transform: none; }
 }
 .dnd-ghost-time > span { white-space: nowrap; }
 .dnd-ghost-day { font-weight: 900; letter-spacing: 0.3px; }
+.dnd-ghost-note {
+    margin-top: 4px; padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,0.78); color: #ffd54f;
+    font-size: 0.6rem; font-weight: 800; line-height: 1.25; text-align: center; white-space: normal;
+}
+.dnd-ghost-note[hidden] { display: none; }
 
 .pill-subject { font-size: 0.72rem; font-weight: 900; margin-bottom: 2px; text-transform: uppercase; }
 
@@ -1412,7 +1432,16 @@ body.dnd-active #gridWrapper .schedule-pill:hover { transform: none; }
     color: white;
     border-color: #630100;
 }
-.btn-save-outlined.btn-approve:hover { background: #7a0100; border-color: #7a0100; }
+.btn-save-outlined.btn-approve:hover { background: #8f0a0a; border-color: #8f0a0a; }
+/* Approve Schedule: a clear hover (lift + glow), and a press-down on click. */
+.btn-save-outlined.btn-approve { transition: background .18s, border-color .18s, transform .12s, box-shadow .18s; }
+.btn-save-outlined.btn-approve:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 1, 0, .35);
+}
+.btn-save-outlined.btn-approve:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 4px rgba(99, 1, 0, .3); }
+.btn-save-outlined.btn-approve:focus-visible { outline: 2px solid #630100; outline-offset: 2px; }
+.btn-save-outlined.btn-approve:disabled { opacity: .6; cursor: not-allowed; }
 
 /* Keep old classes for JS compat — hidden */
 .btn-confirm-right, .btn-approve-right { display: none; }

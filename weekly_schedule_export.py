@@ -23,6 +23,7 @@ week's approved make-ups, kind='makeup').
 """
 import csv
 import io
+import export_style
 import re
 
 
@@ -362,6 +363,7 @@ def gen_xlsx(d, logo_path=None):
 
 
     buf = io.BytesIO()
+    export_style.xlsx_apply(wb)          # Arial, >= 12 pt, logo centered
     wb.save(buf); buf.seek(0)
     return buf.read()
 
@@ -497,6 +499,7 @@ def gen_docx(d, logo_path=None):
 
 
     buf = io.BytesIO()
+    export_style.docx_apply(doc)         # Arial, >= 12 pt
     doc.save(buf); buf.seek(0)
     return buf.read()
 
@@ -615,6 +618,7 @@ def gen_pdf(d, logo_path=None):
         story.append(Paragraph(_esc(n), note_s))
 
 
+    export_style.rl_apply(story)         # Arial, >= 12 pt
     doc.build(story)
     buf.seek(0)
     return buf.read()

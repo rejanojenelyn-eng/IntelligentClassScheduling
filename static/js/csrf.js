@@ -22,9 +22,14 @@
             var isRequest = typeof Request !== 'undefined' && input instanceof Request;
             var method = (init && init.method) || (isRequest ? input.method : 'GET');
             var url = isRequest ? input.url : String(input);
-            if (!SAFE.test(method) && sameOrigin(url)) {
+            var unsafe = !SAFE.test(method);
+            // X-Page-Id (session_guard.js): which open page made a request, so the live
+            // schedule updates (live_updates.js) don't "refresh" a page for its own save.
+            var pageId = window.DSS_PAGE_ID;
+            if (sameOrigin(url) && (unsafe || pageId)) {
                 var headers = new Headers((init && init.headers) || (isRequest ? input.headers : undefined));
-                if (!headers.has('X-CSRFToken')) headers.set('X-CSRFToken', token);
+                if (unsafe && !headers.has('X-CSRFToken')) headers.set('X-CSRFToken', token);
+                if (pageId && !headers.has('X-Page-Id')) headers.set('X-Page-Id', pageId);
                 init = Object.assign({}, init, { headers: headers });
             }
             return nativeFetch.call(this, input, init);
@@ -40,6 +45,9 @@
     XMLHttpRequest.prototype.send = function () {
         if (this._csrfNeeded) {
             try { this.setRequestHeader('X-CSRFToken', token); } catch (e) { /* not opened */ }
+            if (window.DSS_PAGE_ID) {
+                try { this.setRequestHeader('X-Page-Id', window.DSS_PAGE_ID); } catch (e) { /* not opened */ }
+            }
         }
         return nativeSend.apply(this, arguments);
     };

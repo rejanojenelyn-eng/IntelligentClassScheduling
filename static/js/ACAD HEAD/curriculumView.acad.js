@@ -88,10 +88,12 @@ function _viewExpPDF(curricula, filename) {
     const COL_W = [26, 20, 18, 62, 14, 14, 18, 18];
     curricula.forEach((curr, cidx) => {
         if (cidx > 0) doc.addPage();
+        // Letterhead logo, centered (pdf_house_style.js); the header moves down below it.
+        const _d = (window.DSSPdf ? DSSPdf.logo(doc, 6) : 6) - 6;
         doc.setTextColor(0, 0, 0);
         doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-        doc.text(`${(curr.program_name || '').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year})`, W / 2, 15, { align: 'center' });
-        let startY = 24;
+        doc.text(`${(curr.program_name || '').toUpperCase()} (LOPEZ, QUEZON) (CY ${curr.curriculum_year})`, W / 2, 15 + _d, { align: 'center' });
+        let startY = 24 + _d;
         curr.year_levels.forEach(yl => {
             yl.semesters.forEach(sem => {
                 if (startY > 260) { doc.addPage(); startY = 15; }

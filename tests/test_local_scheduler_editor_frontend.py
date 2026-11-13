@@ -68,6 +68,7 @@ var _showLocalReasonModal = async () => 'Room swap';
 var _presentLocalEffectiveConflicts = () => {}, _presentLocalPublishConflicts = () => modals.push(['Conflicts', '']);
 var _loadVersionHistoryPanel = () => {}, refreshScheduleGrid = async () => {};
 var renderGrid = () => { if (SCENARIO.renderThrows) throw new Error('render boom'); };
+var _viewedRoomId = () => document.getElementById('sel_room').value || '';
 var allRooms = [{ id: '5', name: 'LQ104' }, { id: '7', name: 'LQ207' }];
 var _updateWorkflowBar = () => {}, _updateUnitProgress = () => {};
 

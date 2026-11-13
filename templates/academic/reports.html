@@ -93,6 +93,14 @@
 .rpt-cb-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 130px; overflow-y: auto; padding: 6px; border: 1.5px solid #eee; border-radius: 8px; }
 .rpt-cb-item { display: flex; align-items: center; gap: 6px; font-size: .78rem; padding: 5px 10px; background: #fafafa; border-radius: 6px; cursor: pointer; }
 .rpt-cb-item input { cursor: pointer; }
+/* Type-to-search above a long checkbox list (Class Schedule → Program) */
+.rpt-cb-search { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 6px; border: 1.5px solid #e3e3e3; border-radius: 8px; background: #fff; }
+.rpt-cb-search:focus-within { border-color: #630100; }
+.rpt-cb-search i { color: #999; font-size: .8rem; }
+.rpt-cb-search input { flex: 1; min-width: 0; border: 0; outline: 0; font-size: .8rem; background: transparent; }
+.rpt-cb-sel { font-size: .7rem; color: #630100; font-weight: 700; white-space: nowrap; }
+.rpt-cb-sel a { color: #630100; margin-left: 6px; cursor: pointer; text-decoration: underline; font-weight: 600; }
+.rpt-cb-none { width: 100%; font-size: .76rem; color: #999; padding: 6px 4px; }
 .rpt-layout-row { display: flex; gap: 12px; }
 .rpt-layout-card { flex: 1; border: 2px solid #eee; border-radius: 8px; padding: 14px; text-align: center; cursor: pointer; font-size: .82rem; font-weight: 600; color: #555; transition: 0.15s; }
 .rpt-layout-card i { display: block; font-size: 1.3rem; margin-bottom: 6px; color: #999; }
@@ -295,7 +303,7 @@
             <div class="emp-export-section-header">
                 <span class="emp-export-section-title">Academic Year</span>
             </div>
-            <div class="emp-cb-list" id="facSubAyList">
+            <div class="emp-cb-list" id="facSubAyList" data-multi-dd="Select academic year(s)">
                 {% for ay in ay_list %}
                 <div class="emp-cb-item" onclick="_toggleFacSubCb(this)">
                     <input type="checkbox" class="fse-ay-cb" value="{{ ay.academicyearid }}" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
@@ -344,6 +352,15 @@
                     <span>Regular</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Optional: only these faculty (search by name or Employee ID). Empty = everyone
+             of the selected Faculty Type(s). -->
+        <div class="emp-export-section">
+            <div class="emp-export-section-header">
+                <span class="emp-export-section-title">Faculty <span style="font-weight:600;text-transform:none;letter-spacing:0;color:#999;">(optional — leave empty for all)</span></span>
+            </div>
+            <div class="emp-cb-list" id="facSubFacList" data-multi-dd="All faculty of the selected type(s)"></div>
         </div>
 
         <div class="emp-export-footer">
@@ -397,6 +414,8 @@ function openReportModal(reportType) {
     document.getElementById('rptHdrTitle').textContent = meta.title;
     document.getElementById('rptHdrSub').textContent   = meta.sub;
     document.getElementById('rptBodyContent').innerHTML = _buildFilterHTML(reportType);
+    // Long checkbox lists (Academic Year, Program, Specialization, Designation) -> dropdowns.
+    if (window.MultiDD) MultiDD.initAll(document.getElementById('rptBodyContent'));
 
 
     if (reportType === 'curriculum') {
@@ -459,7 +478,7 @@ function _buildFilterHTML(type) {
         html += `
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Academic Year — select at least one</div>
-                <div class="rpt-cb-list">${ayOpts.map(o => cb('cs-ay-cb', o.value, o.label)).join('')}</div>
+                <div class="rpt-cb-list" data-multi-dd="Select academic year(s)">${ayOpts.map(o => cb('cs-ay-cb', o.value, o.label)).join('')}</div>
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Semester — select at least one</div>
@@ -467,7 +486,9 @@ function _buildFilterHTML(type) {
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Program — leave empty for all</div>
-                <div class="rpt-cb-list">${progOpts.map(o => cb('cs-prog-cb', o.value, o.label)).join('')}</div>
+                <div class="rpt-cb-list" id="rptCsProgList" data-multi-dd="All programs">${progOpts.map(o =>
+                    `<label class="rpt-cb-item" data-code="${_rptAttr(o.value)}" data-label="${_rptAttr(o.label)}" data-search="${_rptAttr((o.value + ' ' + o.label).toLowerCase())}"><input type="checkbox" class="cs-prog-cb" value="${_rptAttr(o.value)}"> ${o.label} <small style="color:#999;font-weight:700;font-size:.68rem;margin-left:4px;">${_rptAttr(o.value)}</small></label>`
+                ).join('')}</div>
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Year Level — leave empty for all</div>
@@ -492,7 +513,7 @@ function _buildFilterHTML(type) {
         html += `
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Academic Year — select at least one</div>
-                <div class="rpt-cb-list">${ayOpts.map(o => cb('rs-ay-cb', o.value, o.label)).join('')}</div>
+                <div class="rpt-cb-list" data-multi-dd="Select academic year(s)">${ayOpts.map(o => cb('rs-ay-cb', o.value, o.label)).join('')}</div>
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Semester — select at least one</div>
@@ -525,11 +546,11 @@ function _buildFilterHTML(type) {
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Specialization — leave empty for all</div>
-                <div class="rpt-cb-list">${spOpts.map(o => cb('fac-sp-cb', o.value, o.label)).join('')}</div>
+                <div class="rpt-cb-list" data-multi-dd="All specializations">${spOpts.map(o => cb('fac-sp-cb', o.value, o.label)).join('')}</div>
             </div>
             <div class="rpt-cb-group">
                 <div class="rpt-cb-group-title">Designation — leave empty for all</div>
-                <div class="rpt-cb-list">${dgOpts.map(o => cb('fac-dg-cb', o.value, o.label)).join('')}</div>
+                <div class="rpt-cb-list" data-multi-dd="All designations">${dgOpts.map(o => cb('fac-dg-cb', o.value, o.label)).join('')}</div>
             </div>`;
     } else if (type === 'assignments') {
         html += `
@@ -639,6 +660,12 @@ document.addEventListener('click', (e) => {
     document.getElementById('rptTaFacMenu')?.classList.remove('fl-fac-open');
 });
 
+
+// HTML-escape a value placed inside an attribute or the list markup.
+function _rptAttr(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 let _csSelectedLayout = 'table';
 function _csSelectLayout(el) {
@@ -1068,8 +1095,50 @@ function openFacSubExportModal() {
     document.getElementById('facSubScopeLabel').textContent = 'Select filters to begin';
     document.getElementById('facSubConfirmBtn').disabled = true;
     document.getElementById('facSubTypeAllBtn').textContent = 'All';
+    _facSubBuildFacultyList();
+    // Long lists (Academic Year, Faculty) are dropdowns; refresh their labels after the reset.
+    if (window.MultiDD) { MultiDD.initAll(document.getElementById('facSubExportModal')); MultiDD.refreshAll(); }
     document.getElementById('facSubExportModal').style.display = 'flex';
 }
+
+/* ── Optional "Faculty" pick list (a searchable dropdown — multi_dropdown.js): only faculty
+   of the selected Faculty Type(s) are listed (and kept selected). Empty = everyone. ── */
+function _facSubBuildFacultyList() {
+    const list = document.getElementById('facSubFacList');
+    if (!list) return;
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    list.innerHTML = (RPT_DATA.faculty || []).map(f => `
+        <div class="emp-cb-item" onclick="_toggleFacSubCb(this)" data-type="${esc(f.typename || '')}"
+             data-label="${esc(f.fullname || f.employeenumber)}" data-code="${esc(f.employeenumber)}"
+             data-search="${esc((String(f.employeenumber) + ' ' + (f.fullname || '')).toLowerCase())}">
+            <input type="checkbox" class="fse-fac-cb" value="${esc(f.employeenumber)}" onclick="event.stopPropagation()" onchange="_onFacSubCbChange(this)">
+            <span>${esc(f.fullname || f.employeenumber)} <span style="color:#999;font-size:.72rem;">· ${esc(f.employeenumber)}${f.typename ? ' · ' + esc(f.typename) : ''}</span></span>
+        </div>`).join('');
+    _facSubFilterFaculty();
+}
+
+// Hide faculty whose type isn't selected (the dropdown's own search hides the rest).
+function _facSubFilterFaculty() {
+    const list = document.getElementById('facSubFacList');
+    if (!list) return;
+    const types = new Set(Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value));
+    let dropped = false;
+    list.querySelectorAll('.emp-cb-item').forEach(item => {
+        const typeOk = !types.size || types.has(item.dataset.type);
+        const cb = item.querySelector('input');
+        // A faculty of an unselected type can't be in the report — don't keep them ticked.
+        if (!typeOk && cb.checked) { cb.checked = false; item.classList.remove('selected'); dropped = true; }
+        item.style.display = typeOk ? '' : 'none';
+    });
+    _facSubFacCount();
+    if (dropped) { clearTimeout(_facSubCountTmr); _facSubCountTmr = setTimeout(_fetchFacSubCount, 400); }
+}
+
+function _facSubFacCount() {
+    if (window.MultiDD) MultiDD.refreshAll();   // the dropdown shows what is chosen
+}
+
 function closeFacSubExportModal() {
     document.getElementById('facSubExportModal').style.display = 'none';
 }
@@ -1081,6 +1150,8 @@ function _toggleFacSubCb(itemEl) {
 }
 function _onFacSubCbChange(cb) {
     cb.closest('.emp-cb-item').classList.toggle('selected', cb.checked);
+    if (cb.classList.contains('fse-type-cb')) _facSubFilterFaculty();   // list follows the types
+    if (cb.classList.contains('fse-fac-cb'))  _facSubFacCount();
     _syncFacSubTypeAllBtn();
     _updateFacSubFooter();
     clearTimeout(_facSubCountTmr);
@@ -1091,6 +1162,7 @@ function _toggleFacSubAllTypes() {
     const cbs    = document.querySelectorAll('#facSubExportModal .fse-type-cb');
     const allSel = Array.from(cbs).every(cb => cb.checked);
     cbs.forEach(cb => { cb.checked = !allSel; cb.closest('.emp-cb-item').classList.toggle('selected', !allSel); });
+    _facSubFilterFaculty();
     _syncFacSubTypeAllBtn();
     _updateFacSubFooter();
     clearTimeout(_facSubCountTmr);
@@ -1103,10 +1175,19 @@ function _syncFacSubTypeAllBtn() {
 }
 
 function _facSubFilters() {
+    const chosen = Array.from(document.querySelectorAll('#facSubExportModal .fse-fac-cb:checked'));
+    let types = Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value);
+    // Faculty picked first (no Faculty Type ticked): the report's type(s) come from the
+    // chosen faculty themselves, so Preview/Export work without ticking a type.
+    if (!types.length && chosen.length) {
+        types = [...new Set(chosen.map(cb => cb.closest('.emp-cb-item').dataset.type).filter(Boolean))];
+    }
     return {
         ay_ids:        Array.from(document.querySelectorAll('#facSubExportModal .fse-ay-cb:checked')).map(c => c.value),
         sem_types:     Array.from(document.querySelectorAll('#facSubExportModal .fse-sem-cb:checked')).map(c => c.value),
-        faculty_types: Array.from(document.querySelectorAll('#facSubExportModal .fse-type-cb:checked')).map(c => c.value),
+        faculty_types: types,
+        // Optional: only these faculty (empty = everyone of the selected types).
+        employee_numbers: chosen.map(c => c.value),
     };
 }
 
@@ -1150,7 +1231,9 @@ function previewFacSubReport() {
     f.ay_ids.forEach(v => params.append('ay_ids', v));
     f.sem_types.forEach(v => params.append('sem_types', v));
     f.faculty_types.forEach(v => params.append('faculty_types', v));
+    f.employee_numbers.forEach(v => params.append('employee_numbers', v));
     window.location.href = `/reports/preview/faculty_subject?${params.toString()}`;
 }
 </script>
+<script src="{{ url_for('static', filename='js/multi_dropdown.js') }}"></script>
 {% endblock %}
