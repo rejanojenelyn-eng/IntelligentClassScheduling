@@ -9171,12 +9171,34 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
     norm_with_time = {r['SubjectCode'] for r in current_rows if r['Time']}
     norm_timed     = [r for r in current_rows if r['Time']]
     hist_extra     = [r for r in hist_rows if r['SubjectCode'] not in norm_with_time]
-    hist_codes     = {r['SubjectCode'] for r in hist_rows}
-    norm_untimed   = [r for r in current_rows if not r['Time'] and r['SubjectCode'] not in hist_codes]
+    # A current row with no day/time yet gives way only to history of the SAME term — with
+    # no Academic Year filter, history of other years must not hide this term's subject.
+    hist_terms     = {(r['SubjectCode'], r['AcademicYear'], r['SemesterType']) for r in hist_rows}
+    norm_untimed   = [r for r in current_rows if not r['Time']
+                      and (r['SubjectCode'], r['AcademicYear'], r['SemesterType']) not in hist_terms]
     combined = norm_timed + hist_extra + norm_untimed
     if include_unscheduled:
-        combined += _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, combined)
+        # No Academic Year ticked (e.g. only a Semester / Program filter): still list every
+        # subject of the years that are live, not only of an explicitly chosen year.
+        fill_ays = list(ay_ids) or _sch_live_academic_years(cur, current_rows)
+        combined += _sch_unscheduled_rows(cur, fill_ays, sem_types, programs, year_levels, combined)
     return _sch_merge_session_rows(combined) if merge else combined
+
+
+def _sch_live_academic_years(cur, current_rows):
+    """Academic years whose sections an export with no Academic Year filter lists in full
+    (every subject, scheduled or not): each year with a live Official / Local schedule row
+    in the export, plus each year that has a semester not yet ended. A concluded year's
+    offerings live in historical_data and are exported as recorded, without TBA rows."""
+    labels = {r.get('AcademicYear') for r in current_rows if r.get('AcademicYear')}
+    cur.execute("""
+        SELECT ay.academicyearid, ay.yearstart || '-' || ay.yearend AS label,
+               BOOL_OR(sem.semenddate IS NULL OR sem.semenddate >= CURRENT_DATE) AS still_open
+        FROM academicyear ay
+        LEFT JOIN semester sem ON sem.academicyearid = ay.academicyearid
+        GROUP BY ay.academicyearid, ay.yearstart, ay.yearend
+        ORDER BY ay.yearstart""")
+    return [r['academicyearid'] for r in cur.fetchall() if r['still_open'] or r['label'] in labels]
 
 
 def _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, rows):
