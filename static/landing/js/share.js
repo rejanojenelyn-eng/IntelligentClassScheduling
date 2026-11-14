@@ -79,11 +79,62 @@
   });
 
   // ----- Download QR Code -----
-  // The link alone works (the server sends it as a download); fetching it first lets
-  // the button show progress while the poster is generated.
+  // Computers and Android Chrome: a normal file download. iPhone and in-app browsers
+  // (Messenger, Facebook, Instagram…) can't download a file from a page, so there the
+  // phone's share sheet opens with the poster (→ "Save Image"), or — where that isn't
+  // supported — the poster opens as an image to long-press and save.
   const dl = modal.querySelector('[data-share-download]');
+  const fileName = dl.getAttribute('download') || 'PUPLC_Scheduling_System_QR.png';
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inApp = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\/|Twitter|TikTok|Snapchat|; wv\)/i.test(ua);
+  const viaShareSheet = isIOS || inApp;
+  const inlineUrl = dl.href + (dl.href.includes('?') ? '&' : '?') + 'inline=1';
+
+  // Fetched ahead (when the popup opens) so the tap can open the share sheet at once:
+  // phones only allow it straight from the tap, not after waiting for a download.
+  let posterFile = null, posterLoading = null;
+  const loadPoster = () => {
+    if (posterFile) return Promise.resolve(posterFile);
+    if (!posterLoading) {
+      posterLoading = fetch(dl.href)
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+        .then(b => (posterFile = new File([b], fileName, { type: 'image/png' })))
+        .catch(err => { posterLoading = null; throw err; });
+    }
+    return posterLoading;
+  };
+  if (viaShareSheet && window.fetch && window.File) {
+    document.querySelectorAll('[data-share-open]').forEach(b =>
+      b.addEventListener('click', () => { loadPoster().catch(() => {}); }));
+  }
+
+  const canShareFile = f => {
+    try { return !!(f && navigator.canShare && navigator.share && navigator.canShare({ files: [f] })); }
+    catch (_) { return false; }
+  };
+  const openImage = () => {
+    say('Long-press the QR code image, then choose "Save Image" or "Download image".');
+    setTimeout(() => { window.location.href = inlineUrl; }, 600);
+  };
+
   dl.addEventListener('click', async e => {
-    if (!window.fetch || !window.URL || !URL.createObjectURL) return;
+    if (viaShareSheet) {
+      e.preventDefault();
+      if (canShareFile(posterFile)) {
+        try {
+          await navigator.share({ files: [posterFile], title });
+          say('Choose "Save Image" to keep the QR code poster.');
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;      // the user closed the sheet
+          openImage();
+        }
+        return;
+      }
+      openImage();
+      return;
+    }
+    if (!window.fetch || !window.URL || !URL.createObjectURL) return;   // the link downloads it
     e.preventDefault();
     const label = dl.querySelector('span');
     dl.setAttribute('aria-busy', 'true');
@@ -94,14 +145,15 @@
       const blobUrl = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = dl.getAttribute('download');
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
       say('QR code poster downloaded.');
     } catch (_) {
-      say('Could not prepare the QR code. Please try again.');
+      // Let the browser download it from the server directly.
+      window.location.href = dl.href;
     } finally {
       dl.removeAttribute('aria-busy');
       label.textContent = 'Download QR Code';

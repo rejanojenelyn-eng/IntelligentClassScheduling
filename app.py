@@ -2427,7 +2427,10 @@ def share_qr():
 def share_qr_poster():
     resp = make_response(_qr_poster.poster_png(_public_site_url()))
     resp.mimetype = 'image/png'
-    resp.headers['Content-Disposition'] = 'attachment; filename="PUPLC_Scheduling_System_QR.png"'
+    # ?inline=1 shows the poster as a plain image (phones whose browser can't download a
+    # file — iPhone / in-app browsers — open it this way and long-press to save it).
+    disposition = 'inline' if request.args.get('inline') == '1' else 'attachment'
+    resp.headers['Content-Disposition'] = f'{disposition}; filename="PUPLC_Scheduling_System_QR.png"'
     resp.headers['Cache-Control'] = 'public, max-age=3600'
     return resp
 
