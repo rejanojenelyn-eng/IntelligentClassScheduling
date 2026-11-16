@@ -91,7 +91,7 @@ def _clean_new_email(cur, acc, new_email):
         LIMIT 1
     """, [new_email, acc['userid']])
     if cur.fetchone():
-        raise EmailChangeError(409, 'email_taken', 'That email address is already used by another account.')
+        raise EmailChangeError(409, 'email_taken', 'That email address already exists or is invalid. Please use a different one.')
     return new_email
 
 
@@ -196,7 +196,7 @@ def confirm(conn, username, new_email, code, save=True):
         return saved
     except pg_errors.UniqueViolation:
         conn.rollback()
-        raise EmailChangeError(409, 'email_taken', 'That email address is already used by another account.')
+        raise EmailChangeError(409, 'email_taken', 'That email address already exists or is invalid. Please use a different one.')
     except EmailChangeError:
         conn.rollback()
         raise

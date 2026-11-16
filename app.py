@@ -3592,8 +3592,8 @@ def _setup_commit(username, draft, has_faculty):
         conn.rollback()
         constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
         if 'email' in constraint:
-            return ("That email address is now used by another account. Nothing was saved — "
-                    "please choose a different email address.")
+            return ("That email address already exists or is invalid. Nothing was saved — "
+                    "please use a different email address.")
         if 'contact' in constraint:
             return ("That contact number is now used by another account. Nothing was saved — "
                     "please enter a different contact number.")
