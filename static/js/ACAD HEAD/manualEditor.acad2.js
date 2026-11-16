@@ -1488,6 +1488,7 @@ function _renderProgPills(sessions, prog, yl) {
                 };
             }
 
+            if (typeof _markSlicePill === 'function') _markSlicePill(pill);   // slices of the open subject
             wrapper.appendChild(pill);
         });
     });
@@ -3946,6 +3947,7 @@ async function renderGrid(roomId, ayFilter = '', semFilter = '') {
                     window.handlePillClick(encodeURIComponent(JSON.stringify(sess._deleteTarget || sess)));
                 };
 
+                if (typeof _markSlicePill === 'function') _markSlicePill(pill);   // slices of the open subject
                 wrapper.appendChild(pill);
             });
         });

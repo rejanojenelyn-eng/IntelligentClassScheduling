@@ -124,6 +124,12 @@
             display: block;
         }
         .login-btn:hover { background: #fff; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+        /* Sign-in paused for the typed username: the button waits for the countdown. */
+        .login-btn:disabled, .login-btn:disabled:hover {
+            background: rgba(255,253,249,0.45); color: rgba(75,10,10,0.75); cursor: not-allowed;
+            transform: none; box-shadow: none;
+        }
+        .login-btn i { margin-right: 6px; }
 
         .home-link {
             position: fixed; top: 22px; left: 26px;
@@ -221,7 +227,7 @@
                     <a href="{{ url_for('forgot_password', restart=1) }}" class="forgot-link">Forgot Password?</a>
                 </div>
 
-                <button type="submit" class="login-btn">LOGIN</button>
+                <button type="submit" class="login-btn" id="loginBtn">LOGIN</button>
             </form>
 
             {% with messages = get_flashed_messages(with_categories=true) %}
@@ -232,7 +238,7 @@
                     <div class="lock-head"><i class="fas fa-lock"></i> Sign-in temporarily paused</div>
                     <p>Sign-in{% if lock_user %} for <b>{{ lock_user }}</b>{% endif %} is paused because of too many incorrect
                        login attempts. If you have forgotten your password, use Forgot Password &mdash; it lifts the pause.</p>
-                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" aria-live="polite">
+                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" data-user="{{ lock_user }}" aria-live="polite">
                         <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong> <span id="lockUntil"></span>
                     </div>
                     <div class="lock-actions">
@@ -247,7 +253,7 @@
                     <div class="lock-head"><i class="fas fa-lock"></i> Sign-in temporarily paused</div>
                     <p>{{ message }}</p>
                     {% if lock_seconds %}
-                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" aria-live="polite">
+                    <div class="lock-timer" id="lockTimer" data-seconds="{{ lock_seconds }}" data-user="{{ lock_user }}" aria-live="polite">
                         <i class="far fa-clock"></i> You can try again in <strong id="lockLeft"></strong> <span id="lockUntil"></span>
                     </div>
                     {% endif %}
@@ -292,13 +298,34 @@
         const out = document.getElementById('lockLeft');
         const until = document.getElementById('lockUntil');
         const untilText = `(until ${new Date(end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })})`;
+
+        // LOGIN stays disabled while sign-in is paused for this username (the server
+        // refuses it anyway). The pause is per username, so another one can still sign in.
+        const btn = document.getElementById('loginBtn');
+        const userInput = document.querySelector('input[name="username"]');
+        const lockedUser = (box.dataset.user || '').trim().toLowerCase();
+        let paused = true;
+        function syncButton() {
+            if (!btn) return;
+            const typed = (userInput ? userInput.value : '').trim().toLowerCase();
+            const off = paused && (!lockedUser || typed === lockedUser);
+            btn.disabled = off;
+            btn.innerHTML = off ? '<i class="fas fa-lock"></i>LOGIN' : 'LOGIN';
+            btn.title = off ? 'Sign-in with this username is paused. Please wait for the timer to finish.' : '';
+        }
+        if (userInput) userInput.addEventListener('input', syncButton);
+        const form = btn && btn.form;
+        if (form) form.addEventListener('submit', e => { syncButton(); if (btn.disabled) e.preventDefault(); });
+
         function tick() {
             const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
             if (left === 0) {
                 box.classList.add('done');
                 box.innerHTML = '<i class="fas fa-lock-open"></i> <strong>You can sign in again now.</strong>';
+                paused = false; syncButton();
                 return;
             }
+            syncButton();
             // "14 min 32 sec" / "1 hr 05 min", and the clock time the pause ends.
             const h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), sec = left % 60;
             out.textContent = h ? `${h} hr ${String(m).padStart(2, '0')} min`

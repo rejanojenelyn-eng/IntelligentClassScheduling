@@ -138,6 +138,7 @@ function _renderRoomSearchResults() {
         const item = document.createElement('div');
         item.className   = 'frs-room-item' + (String(r.id) === String(_activeRoom) ? ' active' : '');
         item.innerHTML   = `<span class="frs-room-name">${_esc(r.name)}</span>` +
+                           (_frsShared[String(r.id)] ? `<span class="frs-room-shared" title="Shared room: up to ${_frsShared[String(r.id)]} sections at the same time">Shared ×${_frsShared[String(r.id)]}</span>` : '') +
                            `<span class="frs-room-floor">${_esc([bName(r.bid), _floorLabel(r.floor)].filter(Boolean).join(' · '))}</span>`;
         item.dataset.rid = r.id;
         item.onclick     = () => frsOpenRoomFromSearch(r.id, r.bid);
@@ -165,6 +166,39 @@ function frsFilterFloor() {
 /* ═══════════════════════════════════════════
    ROOM LIST
 ═══════════════════════════════════════════ */
+/* Shared rooms (Settings > Shared Rooms): {roomid: max sections at the same time}. */
+let _frsShared = {};
+const _frsSharedReady = fetch('/api/shared_rooms').then(r => r.ok ? r.json() : null)
+    .then(d => { _frsShared = (d && d.limits) || {}; }).catch(() => {});
+
+function _frsSharedNote(rid) {
+    const sub = document.getElementById('frsCalSub');
+    if (!sub) return;
+    let note = document.getElementById('frsSharedNote');
+    if (!note) {
+        note = document.createElement('div');
+        note.id = 'frsSharedNote';
+        note.className = 'frs-shared-note';
+        sub.insertAdjacentElement('afterend', note);
+    }
+    // Room list badges (the list may have been drawn before the limits arrived).
+    document.querySelectorAll('.frs-room-item[data-rid]').forEach(it => {
+        const l = _frsShared[String(it.dataset.rid)];
+        if (!l || it.querySelector('.frs-room-shared')) return;
+        const b = document.createElement('span');
+        b.className = 'frs-room-shared'; b.textContent = `Shared ×${l}`;
+        b.title = `Shared room: up to ${l} sections at the same time`;
+        it.querySelector('.frs-room-name')?.insertAdjacentElement('afterend', b);
+    });
+    const lim = _frsShared[String(rid)];
+    note.hidden = !lim;
+    if (lim) {
+        note.innerHTML = `<i class="fas fa-people-group"></i> <b>Shared room</b> — up to ${lim} sections can have ` +
+            `class here at the same time (same start and end time; NSTP and other merge-set subjects may overlap), ` +
+            `so classes may appear side by side.`;
+    }
+}
+
 function _renderRoomList(focusRoomId = null) {
     if (_frsRoomSearch) { _renderRoomSearchResults(); return; }
     const list = document.getElementById('frsRoomList');
@@ -213,6 +247,7 @@ async function frsSelectRoom(rid, rname, bid) {
     const subEl = document.getElementById('frsCalSub');
     if (subEl) subEl.textContent = [bldgObj ? `${bldgObj.name} Building` : '',
                                     roomObj ? _floorLabel(roomObj.floor) : ''].filter(Boolean).join(' · ');
+    _frsSharedReady.then(() => _frsSharedNote(rid));
     _frsSessions = [];
     _clearGrid();
     try {
@@ -351,10 +386,83 @@ function _frsMakeupDateLabel(s) {
     return `${s.daydesc}, ${_FRS_MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
+/* Three or more classes at EXACTLY the same time (a shared room) are too narrow side by
+   side: they become one card listing every class (each still opens its details). */
+function _frsStackSameTime(cards) {
+    const groups = new Map(), out = [];
+    cards.forEach(c => {
+        const k = [_normalizeDay(c.daydesc), c.starttimeid, c.endtimeid, c.makeup_date || ''].join('|');
+        if (!groups.has(k)) { groups.set(k, []); out.push(k); }
+        groups.get(k).push(c);
+    });
+    return out.flatMap(k => {
+        const g = groups.get(k);
+        if (g.length < 3) return g;
+        return [Object.assign({}, g[0], { _stack: g, _sections: [], subjectcode: g[0].subjectcode })];
+    });
+}
+
+/* One card per class meeting: a merged class (same subject, faculty, day and time for
+   several sections) comes back as one row per section — show it once, with its sections. */
+function _frsMergeCards(sessions) {
+    const map = new Map(), out = [];
+    (sessions || []).forEach(s => {
+        const sec = s.sectionname || s.section_name || '';
+        const k = [_normalizeDay(s.daydesc), s.starttimeid, s.endtimeid, (s.subjectcode || '').toUpperCase(),
+                   s.employee_number || s.instructor || '', s.status || '', s.makeup_date || ''].join('|');
+        if (map.has(k)) {
+            const c = map.get(k);
+            if (sec && !c._sections.includes(sec)) c._sections.push(sec);
+            return;
+        }
+        const c = Object.assign({}, s, { _sections: sec ? [sec] : [] });
+        map.set(k, c); out.push(c);
+    });
+    return out;
+}
+
+/* Side-by-side layout for classes that overlap on a day (e.g. a shared room holding
+   several classes at once): Map(session -> { lane, lanes }). Overlapping classes form a
+   group; each gets the first free lane, and every class in the group splits the day
+   column into that group's number of lanes. */
+function _frsLanes(sessions) {
+    const byDay = {};
+    sessions.forEach(s => {
+        if (typeof _frsMakeupVisible === 'function' && !_frsMakeupVisible(s)) return;
+        const day = _normalizeDay(s.daydesc);
+        const a = _timeidToMins(s.starttimeid), b = _timeidToMins(s.endtimeid);
+        if (!day || !a || !b || b <= a) return;
+        (byDay[day] = byDay[day] || []).push({ s, a, b });
+    });
+    const out = new Map();
+    Object.values(byDay).forEach(list => {
+        list.sort((x, y) => x.a - y.a || y.b - x.b);
+        let group = [], groupEnd = -1;
+        const close = () => {
+            const laneEnds = [];
+            group.forEach(it => {
+                let lane = laneEnds.findIndex(end => end <= it.a);
+                if (lane < 0) { lane = laneEnds.length; laneEnds.push(it.b); } else laneEnds[lane] = it.b;
+                it.lane = lane;
+            });
+            group.forEach(it => out.set(it.s, { lane: it.lane, lanes: laneEnds.length }));
+            group = []; groupEnd = -1;
+        };
+        list.forEach(it => {
+            if (group.length && it.a >= groupEnd) close();
+            group.push(it); groupEnd = Math.max(groupEnd, it.b);
+        });
+        if (group.length) close();
+    });
+    return out;
+}
+
 function _renderRoomCalendar(sessions) {
     _frsSessions = sessions || [];
     _clearGrid();
-    _frsSessions.forEach(s => {
+    const _cards = _frsStackSameTime(_frsMergeCards(_frsSessions));
+    const _lanes = _frsLanes(_cards);
+    _cards.forEach(s => {
         if (!_frsMakeupVisible(s)) return;
         const day = _normalizeDay(s.daydesc);
         if (!day) return;
@@ -393,6 +501,36 @@ function _renderRoomCalendar(sessions) {
             `<span class="frs-pill-name">${_esc(s.subjectname || '')}</span>` +
             `<div class="frs-pill-meta"><i class="fas fa-user"></i> ${_esc(instrName)}</div>` +
             `<div class="frs-pill-time">${_minsToLabel(startM)} - ${_minsToLabel(endM)}</div>`;
+        if (s._stack) {
+            pill.classList.add('frs-pill-stack');
+            pill.title = `${s._stack.length} classes at the same time — click one for details`;
+            pill.innerHTML = `<span class="frs-pill-code"><i class="fas fa-people-group"></i> ${s._stack.length} classes at once</span>` +
+                s._stack.map((c, i) => `<div class="frs-stack-row" data-i="${i}">` +
+                    `<b>${_esc(c.subjectcode || '')}</b>${(c._sections || []).length > 1 ? ` ×${c._sections.length}` : ''}` +
+                    ` · ${_esc((c.instructor || 'TBA').split(',')[0].trim())}</div>`).join('') +
+                `<div class="frs-pill-time">${_minsToLabel(startM)} - ${_minsToLabel(endM)}</div>`;
+            pill.onclick = e => {
+                const row = e.target.closest('.frs-stack-row');
+                frsShowDetail(s._stack[row ? +row.dataset.i : 0]);
+            };
+        }
+        if ((s._sections || []).length > 1 && !s._stack) {
+            const badge = document.createElement('span');
+            badge.className = 'frs-pill-secs';
+            badge.textContent = `×${s._sections.length} sections`;
+            pill.title = `${s.subjectcode} with ${s._sections.length} sections: ${s._sections.join(', ')} — ${pill.title}`;
+            pill.insertBefore(badge, pill.querySelector('.frs-pill-code').nextSibling);
+        }
+        const _ln = _lanes.get(s);
+        if (_ln && _ln.lanes > 1) {
+            // Several classes at once (shared room): side by side instead of on top.
+            const w = 100 / _ln.lanes;
+            pill.style.left  = `calc(${_ln.lane * w}% + 2px)`;
+            pill.style.right = 'auto';
+            pill.style.width = `calc(${w}% - 4px)`;
+            pill.classList.add('frs-pill-split');
+            if (_ln.lanes >= 3) pill.classList.add('frs-pill-narrow');
+        }
         cell.appendChild(pill);
     });
 }

@@ -514,6 +514,26 @@
               <i class="fas fa-check-circle ic-green"></i>
               <span>No matching rule: each section's merged class adds its own units and hours. A matching rule: the merged class is credited once, using the rule.</span>
             </div>
+
+            <div class="cparam-divider"></div>
+            <div class="pair-list-head">
+              <span class="param-sublabel"><i class="fas fa-door-open param-sublabel-icon"></i>SHARED ROOMS</span>
+              <button class="btn-add-item" onclick="srOpenAdd()"><i class="fas fa-plus"></i> ADD SHARED ROOM</button>
+            </div>
+            <p class="card-desc" style="margin:2px 0 8px;">A shared room (e.g. a gym or quadrangle) can hold several classes at the <b>same time</b> &mdash; different sections, subjects and faculty &mdash; up to the number of <b>sections</b> set here for that time. The classes must have exactly the same start and end time (e.g. 7:30&ndash;9:30 with 7:30&ndash;9:30); a class that only partly overlaps another (3:00&ndash;6:00 with 3:30&ndash;6:00) is still a room conflict &mdash; <b>except</b> between classes of subjects with a merge setting in Class Merging (e.g. NSTP), which may overlap as long as the room never holds more than its number of sections at once. Each time is counted on its own, so the room can be shared again at other times of the day. A merged class of 3 sections counts as 3. Other rooms stay one class at a time. Applies to Generate, the Manual Editor, Save/Publish, the Local Scheduler and faculty requests.</p>
+            <div class="sr-add" id="srAddRow" hidden>
+              <select id="srRoom" class="mlp-input"></select>
+              <input type="number" id="srMax" class="mlp-input sr-max" min="2" max="50" step="1" value="2" aria-label="Sections at once">
+              <span class="sr-unit">sections at once</span>
+              <button class="btn-add-item" onclick="srSave()"><i class="fas fa-check"></i> SAVE</button>
+              <button class="btn-outline sr-cancel" onclick="srCloseAdd()">Cancel</button>
+            </div>
+            <div class="mlp-table-wrap">
+              <table class="mlp-table">
+                <thead><tr><th>ROOM</th><th>BUILDING</th><th>SECTIONS AT ONCE</th><th></th></tr></thead>
+                <tbody id="srBody"><tr><td colspan="4" class="mlp-empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -579,6 +599,28 @@
   <!-- ════════════════════════════════════════════════
        TAB 2 · ACTIVITY LOGS
        ════════════════════════════════════════════════ -->
+  <style>
+    .sr-add { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 10px; padding:10px;
+      background:#fbf6f6; border:1px dashed #d9b3b3; border-radius:8px; }
+    .sr-add[hidden] { display:none; }
+    .sr-add select, .sr-add input { height:34px; padding:4px 10px; border:1px solid #d8c4c4; border-radius:6px;
+      background:#fff; font:inherit; font-size:.85rem; }
+    .sr-add select { flex:1 1 220px; min-width:0; }
+    .sr-add .sr-max { width:80px; flex:0 0 80px; }
+    .sr-unit { font-size:.78rem; color:#6b5555; font-weight:600; }
+    .sr-cancel { padding:6px 12px; }
+    .sr-limit { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:.82rem; color:#555; }
+    .sr-limit .sr-num { width:64px !important; flex:0 0 64px; height:30px; padding:2px 8px; border:1px solid #d8c4c4;
+      border-radius:6px; font:inherit; }
+    .sr-act { white-space:nowrap; text-align:right; }
+    .sr-act button { background:none; border:none; cursor:pointer; color:#9b1c1c; padding:4px 6px; }
+  </style>
+  <style>
+    .logs-retention-note { display:flex; align-items:flex-start; gap:10px; margin:0 0 14px; padding:10px 14px;
+      background:#fff8e6; border:1px solid #f3dca4; border-left:4px solid #e0a800; border-radius:8px;
+      color:#5c4a12; font-size:.84rem; line-height:1.5; }
+    .logs-retention-note i { color:#c99500; margin-top:3px; }
+  </style>
   <div id="tab-logs" class="tab-content">
     <div class="section-block">
 
@@ -600,6 +642,13 @@
             <i class="fas fa-file-pdf"></i> Export PDF
           </button>
         </div>
+      </div>
+
+      <!-- Retention note -->
+      <div class="logs-retention-note" role="note">
+        <i class="fas fa-info-circle"></i>
+        <span>Activity logs are kept for <b>{{ activity_log_retention_days or 30 }} days</b>. Older entries are deleted
+        automatically to keep the database from filling up. Use <b>Export PDF</b> to keep a copy before they are removed.</span>
       </div>
 
       <!-- Filter bar -->

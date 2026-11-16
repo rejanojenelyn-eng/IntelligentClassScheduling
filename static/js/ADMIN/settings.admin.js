@@ -2585,6 +2585,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTimeSlots();
   initMergeGroups();
   loadMergeLoadPolicies();
+  loadSharedRooms();
   initProgramPanel();
 
   /* Wire AJAX submit for Edit Section rename form */
@@ -2624,3 +2625,104 @@ document.addEventListener('DOMContentLoaded', () => {
   try { initial = Number(sessionStorage.getItem('settingsPolicyStep')) || 1; } catch (_) {}
   showSettingsPolicyStep(initial, {scroll:false});
 });
+
+
+/* ── Shared Rooms (Merging & Calendar): rooms that may hold several sections at once ── */
+let _SR = { policies: [], rooms: [] };
+const _srEsc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function loadSharedRooms() {
+  const body = document.getElementById('srBody');
+  if (!body) return;
+  try {
+    const res = await fetch('/admin/settings/shared_rooms');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Could not load shared rooms.');
+    _SR = { policies: data.policies || [], rooms: data.rooms || [] };
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="mlp-empty">${_srEsc(e.message)}</td></tr>`;
+    return;
+  }
+  body.innerHTML = _SR.policies.length ? _SR.policies.map(p => `
+    <tr>
+      <td><b>${_srEsc(p.roomname)}</b>${p.roomtype ? ` <span style="color:#999;font-size:.75rem;">· ${_srEsc(p.roomtype)}</span>` : ''}</td>
+      <td>${_srEsc(p.buildingname || '—')}</td>
+      <td><span class="sr-limit"><input type="number" class="sr-num" min="2" max="50" step="1" value="${p.max_sections}"
+                 aria-label="Sections at once for ${_srEsc(p.roomname)}"
+                 onchange="srUpdate(${p.roomid}, this)"> sections</span></td>
+      <td class="sr-act"><button title="Make it a normal room again" onclick="srDelete(${p.roomid})"><i class="fas fa-trash"></i></button></td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" class="mlp-empty">No shared rooms yet — every room holds one class at a time.</td></tr>';
+}
+
+function srOpenAdd() {
+  const used = new Set(_SR.policies.map(p => String(p.roomid)));
+  const sel = document.getElementById('srRoom');
+  const groups = {};
+  _SR.rooms.filter(r => !used.has(String(r.roomid))).forEach(r => {
+    (groups[r.buildingname || 'Other'] = groups[r.buildingname || 'Other'] || []).push(r);
+  });
+  sel.innerHTML = '<option value="">— Select room —</option>' + Object.entries(groups).map(([b, rs]) =>
+    `<optgroup label="${_srEsc(b)}">${rs.map(r => `<option value="${r.roomid}">${_srEsc(r.roomname)}${r.roomtype ? ' · ' + _srEsc(r.roomtype) : ''}</option>`).join('')}</optgroup>`).join('');
+  document.getElementById('srMax').value = 2;
+  document.getElementById('srAddRow').hidden = false;
+  sel.focus();
+}
+function srCloseAdd() { document.getElementById('srAddRow').hidden = true; }
+
+async function _srPost(roomid, max) {
+  const res = await fetch('/admin/settings/shared_rooms', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomid, max_sections: max }),
+  });
+  return res.json();
+}
+
+async function srSave() {
+  const roomid = document.getElementById('srRoom').value;
+  const max = parseInt(document.getElementById('srMax').value, 10);
+  if (!roomid) { _showToast('error', 'Choose a room first.'); return; }
+  if (!(max >= 2 && max <= 50)) { _showToast('error', 'Sections at once must be from 2 to 50.'); return; }
+  try {
+    const data = await _srPost(roomid, max);
+    if (!data.success) { _showToast('error', data.error || 'Could not save.'); return; }
+    _showToast('success', 'Shared room saved.');
+    srCloseAdd();
+    await loadSharedRooms();
+  } catch { _showToast('error', 'Network error — could not save.'); }
+}
+
+async function srUpdate(roomid, input) {
+  const max = parseInt(input.value, 10);
+  const p = _SR.policies.find(x => x.roomid === roomid);
+  if (!(max >= 2 && max <= 50)) {
+    _showToast('error', 'Sections at once must be from 2 to 50.');
+    if (p) input.value = p.max_sections;
+    return;
+  }
+  try {
+    const data = await _srPost(roomid, max);
+    if (!data.success) { _showToast('error', data.error || 'Could not save.'); if (p) input.value = p.max_sections; return; }
+    _showToast('success', 'Shared room updated.');
+    await loadSharedRooms();
+  } catch { _showToast('error', 'Network error — could not save.'); }
+}
+
+function srDelete(roomid) {
+  const p = _SR.policies.find(x => x.roomid === roomid);
+  _confirmAction({
+    title: 'REMOVE SHARED ROOM', sub: p ? p.roomname : '',
+    body: 'This room goes back to one class at a time. No schedule is changed — classes already placed there ' +
+          'together will show as room conflicts until they move.',
+    confirmLabel: 'Remove',
+  }, async () => {
+    try {
+      const res = await fetch(`/admin/settings/shared_rooms/${roomid}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) { _showToast('error', data.error || 'Could not remove.'); return; }
+      _showToast('success', 'Shared room removed.');
+      await loadSharedRooms();
+    } catch { _showToast('error', 'Network error — could not remove.'); }
+  });
+}

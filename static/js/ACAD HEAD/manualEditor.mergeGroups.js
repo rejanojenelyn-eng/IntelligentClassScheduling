@@ -131,6 +131,9 @@ function _mgMergeCandidate(other, mine) {
 // EXACT same start and end (anything else overlapping it is an ordinary conflict).
 function _mgRangeBlocks(r, s, e) {
     if (!(s < r.endIdx && e > r.startIdx)) return false;
+    // Shared room, same Class Merging rule (e.g. NSTP): may overlap at any time; a full
+    // moment of the room comes as its own blocking range (_sharedRoomRanges).
+    if (r.flex) return false;
     return !(r.merge && s === r.startIdx && e === r.endIdx);
 }
 

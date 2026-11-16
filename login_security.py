@@ -177,53 +177,105 @@ def locked_message(seconds_left, new_lock):
             "System Administrator for assistance.")
 
 
-def lockout_email(cfg, user, when=None):
-    """(to, subject, text, html) for the security alert, or None when the account has no
-    email on file. Never includes passwords, codes or anything typed at login."""
-    to_addr = (user or {}).get('notify_email')
+PRIVILEGED_ROLES = ('Admin', 'Academic Head')   # their lockouts also go to SECURITY_ALERT_EMAIL
+
+
+def describe_device(user_agent):
+    """'Chrome on Windows' style summary of a User-Agent ('' when unknown)."""
+    ua = user_agent or ''
+    if not ua:
+        return ''
+    browser = next((name for pat, name in (
+        ('Edg/', 'Microsoft Edge'), ('OPR/', 'Opera'), ('SamsungBrowser', 'Samsung Internet'),
+        ('FBAN', 'Facebook app'), ('FB_IAB', 'Facebook/Messenger app'), ('Firefox/', 'Firefox'),
+        ('CriOS', 'Chrome'), ('Chrome/', 'Chrome'), ('Safari/', 'Safari')) if pat in ua), 'a web browser')
+    system = next((name for pat, name in (
+        ('Windows', 'Windows'), ('Android', 'Android'), ('iPhone', 'iPhone'), ('iPad', 'iPad'),
+        ('Mac OS X', 'macOS'), ('CrOS', 'ChromeOS'), ('Linux', 'Linux')) if pat in ua), '')
+    return f'{browser} on {system}' if system else browser
+
+
+def lockout_email(cfg, user, when=None, ip=None, device=None, to_addr=None, for_owner=True):
+    """(to, subject, text, html) for the security alert, or None when there is no address.
+    for_owner=False words it for the security inbox (SECURITY_ALERT_EMAIL) instead of the
+    account's owner. Never includes passwords, codes or anything typed at login."""
+    to_addr = to_addr or (user or {}).get('notify_email')
     if not to_addr:
         return None
     when = (when or datetime.now(PH_TZ)).astimezone(PH_TZ)
     stamp = when.strftime('%B %d, %Y at %I:%M %p').replace(' 0', ' ') + ' (Philippine Standard Time)'
-    subject = 'Security alert: your PUP Lopez Scheduling System account was temporarily locked'
-    paragraphs = [
-        f"On {stamp}, there were {MAX_FAILED_ATTEMPTS} consecutive incorrect password attempts to sign in "
-        f"to your account (username: {user.get('username')}).",
-        f"To protect your account, password login was temporarily locked for {LOCKOUT_MINUTES} minutes. "
-        "You can sign in again after that. Your account and your data were not changed.",
-        "If these attempts were not made by you, please change your password as soon as you can "
-        "(Forgot Password on the login page, or Profile > Password after you sign in) and let the "
-        "System Administrator know.",
-        "If it was you, no action is needed.",
-    ]
+    uname = (user or {}).get('username')
+    role = (user or {}).get('role') or 'user'
+    source = ' and '.join(x for x in (f'IP address {ip}' if ip else '', device or '') if x)
+    from_line = f' The attempts came from {source}.' if source else ''
+    if for_owner:
+        subject = 'Security alert: someone tried to sign in to your PUP Lopez Scheduling System account'
+        title = 'Someone tried to sign in to your account'
+        paragraphs = [
+            f"On {stamp}, there were {MAX_FAILED_ATTEMPTS} consecutive incorrect password attempts to sign in "
+            f"to your account (username: {uname}).{from_line}",
+            f"To protect your account, password login was temporarily locked for {LOCKOUT_MINUTES} minutes. "
+            "You can sign in again after that. Your account and your data were not changed.",
+            "If these attempts were not made by you, please change your password as soon as you can "
+            "(Forgot Password on the login page, or Profile > Password after you sign in) and let the "
+            "System Administrator know.",
+            "If it was you, no action is needed.",
+        ]
+    else:
+        subject = f'Security alert: repeated sign-in attempts on the {role} account "{uname}"'
+        title = f'Repeated sign-in attempts on the {role} account'
+        paragraphs = [
+            f"On {stamp}, there were {MAX_FAILED_ATTEMPTS} consecutive incorrect password attempts to sign in "
+            f"to the {role} account \"{uname}\".{from_line}",
+            f"Password login for this account was temporarily locked for {LOCKOUT_MINUTES} minutes. "
+            "The account and its data were not changed.",
+            "If the account's owner did not make these attempts, ask them to change their password and "
+            "review Settings > Activity Logs (Security) for other attempts.",
+        ]
     text = 'Security alert\n\n' + '\n\n'.join(paragraphs) + \
            '\n\nThis is an automated message. Please do not reply to this email.\n'
-    html = mailer.notice_email_html('Your account was temporarily locked', paragraphs,
+    html = mailer.notice_email_html(title, paragraphs,
                                     'This is an automated message. Please do not reply to this email.')
     return to_addr, subject, text, html
 
 
-def send_lockout_email(cfg, user, when=None):
-    """Send the alert; a failure is logged (without the address) and never raised, so a
+def lockout_messages(cfg, user, when=None, ip=None, device=None):
+    """Every alert this lockout sends: to the account's own email and, for an Admin /
+    Academic Head account, to the security inbox (SECURITY_ALERT_EMAIL) too."""
+    msgs = []
+    own = lockout_email(cfg, user, when, ip, device)
+    if own:
+        msgs.append(own)
+    inbox = (getattr(cfg, 'SECURITY_ALERT_EMAIL', '') or '').strip()
+    if inbox and (user or {}).get('role') in PRIVILEGED_ROLES \
+            and inbox.lower() != str((user or {}).get('notify_email') or '').strip().lower():
+        msgs.append(lockout_email(cfg, user, when, ip, device, to_addr=inbox, for_owner=False))
+    return msgs
+
+
+def send_lockout_email(cfg, user, when=None, ip=None, device=None):
+    """Send the alert(s); a failure is logged (without the address) and never raised, so a
     mail problem can't undo or block the lockout."""
-    msg = lockout_email(cfg, user, when)
-    if not msg:
-        return False
     try:
+        msgs = lockout_messages(cfg, user, when, ip, device)
+        if not msgs:
+            return False
         if not mailer.configured(cfg):
             print('[login_security] lockout alert not sent: email is not configured', flush=True)
             return False
-        mailer.send_email(cfg, *msg)
+        for msg in msgs:
+            mailer.send_email(cfg, *msg)
         return True
     except Exception as e:
         print(f'[login_security] lockout alert could not be sent: {type(e).__name__}', flush=True)
         return False
 
 
-def dispatch_lockout_email(cfg, user):
+def dispatch_lockout_email(cfg, user, ip=None, user_agent=None):
     when = datetime.now(PH_TZ)
+    device = describe_device(user_agent)
     if SEND_IN_BACKGROUND:
         import threading
-        threading.Thread(target=send_lockout_email, args=(cfg, user, when), daemon=True).start()
+        threading.Thread(target=send_lockout_email, args=(cfg, user, when, ip, device), daemon=True).start()
     else:
-        send_lockout_email(cfg, user, when)
+        send_lockout_email(cfg, user, when, ip, device)

@@ -118,3 +118,12 @@ def with_consent_letter(payload, filename='consent_letter.pdf', content=_CONSENT
     import json as _json
     return {'data': {'payload': _json.dumps(payload), 'attachment': (_io.BytesIO(content), filename)},
             'content_type': 'multipart/form-data'}
+
+
+@pytest.fixture(autouse=True)
+def _no_shared_rooms_by_default(monkeypatch):
+    """Tests run against the local database, where the Admin may have set shared rooms
+    (Settings > Shared Rooms). Every test starts with none, so room checks behave the
+    same whatever is configured there; a test of shared rooms patches its own limits."""
+    import shared_rooms
+    monkeypatch.setattr(shared_rooms, 'limits', lambda: {})

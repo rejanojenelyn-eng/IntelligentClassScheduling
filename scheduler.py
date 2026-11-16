@@ -82,6 +82,7 @@ from collections import defaultdict
 from database import get_db_connection, query_db, load_scheduler_config
 import faculty_load
 import merge_groups
+import shared_rooms
 
 logger = logging.getLogger(__name__)
 
@@ -462,8 +463,10 @@ def _exclude_fully_booked_rooms(rooms: list, published_room_slots: dict) -> list
     # Build per-room set of occupied (day, start, end) tuples
     occupied: dict = defaultdict(set)
     for (room_id, day), slots in published_room_slots.items():
-        for (s, e) in slots:
-            occupied[room_id].add((day, s, e))
+        for sl in slots:
+            if isinstance(sl, shared_rooms.JoinableSlot):
+                continue            # a shared room's time with seats left is still usable
+            occupied[room_id].add((day, sl[0], sl[1]))
 
     available = []
     for r in rooms:
@@ -2019,6 +2022,7 @@ class CSPValidator:
 
     def _check_room_overlaps(self, schedule):
         violations = []
+        shared = shared_rooms.limits()          # Settings > Shared Rooms: {roomid: max sections}
         for i, a in enumerate(schedule):
             for b in schedule[i+1:]:
                 a_room, b_room = a.get('room_id'), b.get('room_id')
@@ -2029,6 +2033,8 @@ class CSPValidator:
                     continue
                 if str(a_room).strip() != str(b_room).strip():   # '18' and 18 are the same room
                     continue
+                if shared_rooms.limit_for(a_room, shared):
+                    continue                   # a shared room is checked by count below
                 if self._merge_policy is not None:
                     # Group model: only the same HC16 merged event may share the room.
                     shared_days = self._unexempted_days(a, b, self._shared_overlap_days(a, b))
@@ -2044,7 +2050,46 @@ class CSPValidator:
                     f"{format_time_12h(a['start_time'])}–{format_time_12h(a['end_time'])}"
                 )
                 violations.append(v)
+        if shared:
+            violations += self._check_shared_room_limits(schedule, shared)
         return violations
+
+    def _check_shared_room_limits(self, schedule, shared):
+        """HC11 for shared rooms: classes may share one only at exactly the same time, up to
+        its limit of sections for that time; a partial overlap is a room conflict."""
+        by_room_day = defaultdict(list)
+        for cls in schedule:
+            rid = cls.get('room_id')
+            lim = shared_rooms.limit_for(rid, shared)
+            if not lim or not cls.get('start_time') or not cls.get('end_time'):
+                continue
+            for d in _entry_days(cls):
+                by_room_day[(str(rid).strip(), d)].append(cls)
+        out = []
+        for (rid, day), rows in by_room_day.items():
+            lim = shared[rid]
+            ivs = [(c['start_time'], c['end_time'],
+                    str(c.get('section_id') or c.get('sectionid') or c.get('section_name')
+                        or c.get('sectionname') or id(c)),
+                    shared_rooms.flex_tag(c.get('subject_code') or c.get('subjectcode'))) for c in rows]
+            for prob in shared_rooms.violations(ivs, lim):
+                s0, e0 = prob['with']
+                here = [c for c in rows if (c['start_time'], c['end_time']) == (s0, e0)]
+                if prob['reason'] == 'partial':
+                    s1, e1 = prob['other']
+                    there = [c for c in rows if (c['start_time'], c['end_time']) == (s1, e1)]
+                    a, b = here[0], there[0]
+                    detail = (f"Shared room {a.get('room')} on {day}: {format_time_12h(s0)}–{format_time_12h(e0)} "
+                              f"and {format_time_12h(s1)}–{format_time_12h(e1)} overlap — classes can share it "
+                              f"only at exactly the same time (merge-set subjects like NSTP may overlap)")
+                else:
+                    a, b = here[0], (here[1] if len(here) > 1 else here[0])
+                    detail = (f"Shared room {a.get('room')} has {prob['count']} sections at once on {day} "
+                              f"{format_time_12h(s0)}–{format_time_12h(e0)} — its limit is {lim}")
+                v = self._build_overlap_violation('HC11', a, b, [day], ('room', 'day', 'time'))
+                v['detail'] = detail
+                out.append(v)
+        return out
 
     # ── HC10 Faculty overlap ────────────────────────────────────
 
@@ -3542,6 +3587,17 @@ class IntelligentScheduler:
                 if r['faculty_id']:
                     faculty_slots[(r['faculty_id'], day)].append((start, end))
                 loaded += 1
+        # Shared rooms (Settings > Shared Rooms): classes at EXACTLY the same time may share
+        # the room up to its limit of sections. Such a time with seats left is listed as a
+        # JoinableSlot; every room check below asks shared_rooms.blocking(), which lets a
+        # class through only at exactly that time. (A generated schedule never puts two of
+        # its own classes in one room at once, so joining can't overflow the limit.)
+        _shared = shared_rooms.limits()
+        if _shared:
+            for _key in list(room_slots):
+                _lim = shared_rooms.limit_for(_key[0], _shared)
+                if _lim:
+                    room_slots[_key] = shared_rooms.generator_slots(room_slots[_key], _lim)
         print(f'[SCHED] Loaded {loaded} published/draft slots ({len(room_slots)} room-days, '
               f'{len(faculty_slots)} faculty-days) to block during generation '
               f'(excl {excl_prog} Yr{exclude_year_level} codes={len(excl_codes)})')
@@ -3764,7 +3820,7 @@ class IntelligentScheduler:
 
         def _published_free(room_id, fac_id, days, start, end) -> bool:
             for d in days:
-                for (ps, pe) in published_room_slots.get((room_id, d), []):
+                for (ps, pe) in shared_rooms.blocking(published_room_slots.get((room_id, d), []), start, end):
                     if CSPValidator._times_overlap(start, end, ps, pe):
                         return False
                 for (ps, pe) in published_faculty_slots.get((fac_id, d), []):
@@ -4176,7 +4232,7 @@ class IntelligentScheduler:
                 for (fs, fe) in faculty_slots.get((fac_id, d), []):
                     if start < fe and end > fs:
                         return True
-                for (rs, re) in room_slots.get((room_id, d), []):
+                for (rs, re) in shared_rooms.blocking(room_slots.get((room_id, d), []), start, end):
                     if start < re and end > rs:
                         return True
                 # Section-level: no two subjects may share a time slot
@@ -4869,7 +4925,7 @@ class IntelligentScheduler:
                             return False
                     # Block slots already occupied in Published/Draft schedules.
                     # Dicts are (id, day) keyed — no day scan needed.
-                    for (ps, pe) in _pub_rooms.get((rid, d), []):
+                    for (ps, pe) in shared_rooms.blocking(_pub_rooms.get((rid, d), []), new_s, new_e):
                         if new_s < pe and new_e > ps:
                             return False
                     for (ps, pe) in _pub_facs.get((fid, d), []):
@@ -5046,7 +5102,7 @@ class IntelligentScheduler:
 
         def _pub_room_free(rid, days, st, et):
             for day in days:
-                for (ps, pe) in published_room_slots.get((rid, day), []):
+                for (ps, pe) in shared_rooms.blocking(published_room_slots.get((rid, day), []), st, et):
                     if st < pe and et > ps:
                         return False
             return True
@@ -5101,7 +5157,7 @@ class IntelligentScheduler:
         def _pub_conflict_desc(fid, rid, days, st, et):
             descs = []
             for day in days:
-                for (ps, pe) in published_room_slots.get((rid, day), []):
+                for (ps, pe) in shared_rooms.blocking(published_room_slots.get((rid, day), []), st, et):
                     if st < pe and et > ps:
                         descs.append(f'Room {rid} occupied on {day} {ps}–{pe}')
                 for (ps, pe) in published_faculty_slots.get((fid, day), []):
@@ -5347,7 +5403,7 @@ class IntelligentScheduler:
                     return False
             for d in days:
                 if rid and any(CSPValidator._times_overlap(s, e, ps, pe)
-                               for (ps, pe) in published_room_slots.get((rid, d), [])):
+                               for (ps, pe) in shared_rooms.blocking(published_room_slots.get((rid, d), []), s, e)):
                     return False
                 if fid and any(CSPValidator._times_overlap(s, e, ps, pe)
                                for (ps, pe) in published_faculty_slots.get((fid, d), [])):
@@ -5443,7 +5499,7 @@ class IntelligentScheduler:
                     return False
             for d in days:
                 if rid:
-                    for (ps, pe) in published_room_slots.get((rid, d), []):
+                    for (ps, pe) in shared_rooms.blocking(published_room_slots.get((rid, d), []), s, e):
                         if CSPValidator._times_overlap(s, e, ps, pe):
                             return False
                 if fid:
@@ -6057,7 +6113,7 @@ class IntelligentScheduler:
             _pub_conflict = False
             for _d in _new_days:
                 # (id, day) keyed — O(1) lookup, no day scan needed
-                for (_ps, _pe) in _pub_rooms.get((_new_rid, _d), []):
+                for (_ps, _pe) in shared_rooms.blocking(_pub_rooms.get((_new_rid, _d), []), _new_s, _new_e):
                     if _new_s < _pe and _new_e > _ps:
                         _pub_conflict = True
                         break
