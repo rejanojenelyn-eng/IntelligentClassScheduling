@@ -703,6 +703,8 @@ const SCENARIOS = {
         }]);
         env.getEl('sel_subj').value = 'ACCO 312';
         env.sandbox.__set('_subjInfo', { subjectcode: 'ACCO 312' });
+        // The subject is open (as on the real page) — a pick with no subject open is refused.
+        env.sandbox.__set('_currentSubjectCode', 'ACCO 312');
         env.sandbox.__set('window.currentEditSession', null);
         const sel = g(env, 'onFacultySelect');
         try { await sel('F1'); } catch (e) { return { error: e.message }; }

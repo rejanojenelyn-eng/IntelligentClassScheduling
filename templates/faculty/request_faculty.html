@@ -419,10 +419,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // A typed past date bypasses the picker's min: clear it instead of keeping it.
     ['editMuDate', 'editAdjFrom', 'editAdjEndDate'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener('change', () => {
-            if (el.value && el.min && el.value < el.min) el.value = '';
+        if (!el) return;
+        // While the year is still being typed (2 → 0002 …) it is not a real date yet —
+        // clearing it then wiped the field on the first digit. Check once the year is
+        // complete, and again when leaving the field.
+        const _past = partial => el.value && el.min && el.value < el.min && (partial || parseInt(el.value, 10) >= 1000);
+        el.addEventListener('change', () => {
+            if (_past(false)) el.value = '';
             if (id === 'editAdjFrom') _rfApplyDateMins();
         }, true);
+        el.addEventListener('blur', () => { if (_past(true)) { el.value = ''; el.dispatchEvent(new Event('change')); } });
     });
     _rfPopulateTimeSelects();
     rfLoadRequests();

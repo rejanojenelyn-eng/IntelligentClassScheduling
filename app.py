@@ -32,6 +32,7 @@ import login_security as _loginsec
 import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
 import export_style as _export_style
+import shared_rooms as _shared_rooms
 import qr_poster as _qr_poster
 from database import get_db_connection, query_db, load_scheduler_config
 from config import Config
@@ -593,6 +594,8 @@ def _ensure_activity_log_table():
                 log_color    VARCHAR(20)  DEFAULT 'gray'
             )
         """)
+        # Newest-first listing and the 30-day clean-up both go by logtime.
+        _cur.execute("CREATE INDEX IF NOT EXISTS ix_activity_log_logtime ON public.activity_log (logtime)")
         _conn.commit()
         _activity_log_ensured = True
     except Exception:
@@ -1581,6 +1584,38 @@ def _inject_session_guard(resp):
             resp.set_data(html[:cut] + tag + html[cut:])
     return resp
 
+# Activity logs are kept for this many days, then deleted automatically so the table
+# (one row per action, for every user) can't keep growing. Shown on the Admin's
+# Settings > Activity Logs tab.
+ACTIVITY_LOG_RETENTION_DAYS = 30
+_ACTIVITY_LOG_PURGE_EVERY   = 3600          # seconds between clean-ups (per worker)
+_activity_log_purged_at     = 0.0
+
+
+def _purge_old_activity_logs(force=False):
+    """Delete activity log entries older than ACTIVITY_LOG_RETENTION_DAYS. Runs at most
+    once an hour (unless forced); never raises."""
+    global _activity_log_purged_at
+    import time as _t
+    now = _t.time()
+    if not force and now - _activity_log_purged_at < _ACTIVITY_LOG_PURGE_EVERY:
+        return 0
+    _activity_log_purged_at = now
+    try:
+        _conn = get_db_connection()
+        try:
+            _cur = _conn.cursor()
+            _cur.execute("DELETE FROM activity_log WHERE logtime < NOW() - make_interval(days => %s)",
+                         (ACTIVITY_LOG_RETENTION_DAYS,))
+            n = _cur.rowcount
+            _conn.commit()
+            return n
+        finally:
+            _conn.close()
+    except Exception:
+        return 0
+
+
 def write_activity_log(action, details, category='system', color='gray', initiated_by=None):
     """Insert one row into activity_log. Never raises — logging must not break the caller.
     initiated_by: who did it when there is no signed-in session yet (a sign-in attempt,
@@ -1599,6 +1634,7 @@ def write_activity_log(action, details, category='system', color='gray', initiat
         _cur.close(); _conn.close()
     except Exception:
         pass
+    _purge_old_activity_logs()          # hourly at most: drop entries past the retention period
 
 def _write_activity_log_tx(cur, action, details, category='system', color='gray', initiated_by=None):
     """Write an audit event inside the caller's transaction so state and audit trail commit together."""
@@ -2480,7 +2516,10 @@ def logout():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = str(request.form.get('username')).strip()
+        # Employee IDs copied from chats may come in a "special font" (𝟭𝟮𝟭𝟯𝟰) — read the
+        # plain characters. The password is matched as typed and, failing that, as plain
+        # characters too (login_security.password_matches).
+        username = _loginsec.plain_text(str(request.form.get('username') or ''))
         password = str(request.form.get('password')).strip()
         session['saved_username'] = username
 
@@ -2519,7 +2558,8 @@ def login():
                                    f"(IP {_client_ip()})",
                                    category='security', color=_LOG_COLORS['security'], initiated_by=username[:50])
             if outcome['new_lock'] and outcome.get('user'):
-                _loginsec.dispatch_lockout_email(Config, outcome['user'])   # once per lockout
+                _loginsec.dispatch_lockout_email(Config, outcome['user'], ip=_client_ip(),
+                                                user_agent=request.headers.get('User-Agent'))   # once per lockout
             flash(_loginsec.locked_message(outcome['seconds_left'], outcome['new_lock']), 'locked')
             # The login page counts down to this moment on every visit until it passes
             # (see login()); a password reset lifts it (forgot_password_new).
@@ -2548,7 +2588,7 @@ def login():
 
         must_change = bool(user_data.get('must_change_password'))
         setup_done  = bool(user_data.get('account_setup_complete', True))
-        if not must_change and password in (f"PUP@{username}", username, 'password123'):
+        if not must_change and _loginsec.plain_text(password) in (f"PUP@{username}", username, 'password123'):
             must_change = True
         # An account that has never set its own password (no password_changed_at) has
         # never been through Account Setup, even when it is marked complete (accounts
@@ -3489,6 +3529,22 @@ def _apply_employment_changes(cur, emp, fac):
             continue
         cur.execute(sql, (fac[field],))
         row = cur.fetchone()
+        if not row and field == 'Specialization':
+            # Typed under "Others" in Account Setup: add it to the list of specializations
+            # (same insert as Admin's import), then use it.
+            cur.execute("SELECT specializationid AS id, isactive FROM specialization "
+                        "WHERE LOWER(specializationname) = LOWER(%s)", (fac[field],))
+            row = cur.fetchone()
+            if row and not row['isactive']:
+                raise _SetupProblem(f"The Specialization '{fac[field]}' is no longer offered. Please choose another one.")
+            if not row:
+                cur.execute("INSERT INTO specialization (specializationname, isactive) VALUES (%s, TRUE) "
+                            "ON CONFLICT (specializationname) DO NOTHING RETURNING specializationid AS id", (fac[field],))
+                row = cur.fetchone()
+                if not row:          # added by someone else at the same moment
+                    cur.execute("SELECT specializationid AS id FROM specialization WHERE specializationname = %s",
+                                (fac[field],))
+                    row = cur.fetchone()
         if not row:
             raise _SetupProblem(f"The {field} '{fac[field]}' no longer exists. Please choose another one.")
         cols[column] = row['id']
@@ -3555,8 +3611,8 @@ def _setup_commit(username, draft, has_faculty):
         conn.rollback()
         constraint = getattr(getattr(e, 'diag', None), 'constraint_name', '') or ''
         if 'email' in constraint:
-            return ("That email address is now used by another account. Nothing was saved — "
-                    "please choose a different email address.")
+            return ("That email address already exists or is invalid. Nothing was saved — "
+                    "please use a different email address.")
         if 'contact' in constraint:
             return ("That contact number is now used by another account. Nothing was saved — "
                     "please enter a different contact number.")
@@ -3593,6 +3649,29 @@ def _setup_commit(username, draft, has_faculty):
                        category='account', color=_LOG_COLORS['account'])
     return None
 
+_SPEC_OTHER = '__other__'          # Specialization "Others (not in the list)" option
+
+
+def _typed_specialization(raw):
+    """A specialization the faculty typed under "Others" during Account Setup. Returns
+    (name, None) or (None, error). One already in the list (any letter case) is reused,
+    so the list never gets the same specialization twice; a new one is added to the list
+    when Account Setup is finished (_apply_employment_changes)."""
+    name = ' '.join(_loginsec.plain_text(raw).split())
+    if not name:
+        return None, "Please type your specialization."
+    if len(name) < 2 or len(name) > 100:
+        return None, "Your specialization must be 2 to 100 characters long."
+    if not re.search(r'[A-Za-z]', name) or not re.fullmatch(r"[A-Za-z0-9 .,&'()/\-]+", name):
+        return None, "Please type your specialization using letters (numbers and . , & ' ( ) / - are allowed)."
+    row = query_db("SELECT specializationname, isactive FROM specialization WHERE LOWER(specializationname) = LOWER(%s)",
+                   (name,), one=True)
+    if row and not row['isactive']:
+        return None, (f"\"{row['specializationname']}\" is no longer offered. Please choose another specialization, "
+                      "or ask the Administrator.")
+    return (row['specializationname'] if row else name), None
+
+
 def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names,
                        employment_locked):
     """Validate one Review-step Edit. Returns (draft changes, None) or (None, error)."""
@@ -3628,6 +3707,11 @@ def _setup_review_edit(action, saved, info, pending_fields, specializations, emp
         return changes, None
     if action == 'edit_employment':
         field, value = form.get('field', ''), form.get('value', '').strip()
+        if field == 'Specialization' and value == _SPEC_OTHER and field not in pending_fields:
+            name, err = _typed_specialization(form.get('other_value', ''))
+            if err:
+                return None, err
+            return {field: name}, None
         options = {'Specialization':    [s['specializationname'] for s in specializations],
                    'Employment Type':   employment_types,
                    'Employment Status': list(_EMPLOYMENT_STATUSES)}
@@ -4592,6 +4676,8 @@ def _request_local_conflict(schedule_id, day, start_t, end_t, *,
     """
     if (not schedule_id and not semester_id) or not day or start_t is None or end_t is None:
         return False
+    if room_id is not None and _shared_rooms.limit_for(room_id):
+        return False        # shared room: counted with the Official check (_shared_room_request_block)
 
     base = [
         "la.status = 'Published'",
@@ -4724,6 +4810,13 @@ def _request_makeup_occupancy(semester_id, day, start_t, end_t, *, on_date=None,
     weekday)."""
     if not semester_id or not day or start_t is None or end_t is None:
         return None
+    if room_id is not None and _shared_rooms.limit_for(room_id):
+        # Shared room: make-ups count with the weekly classes; one is reported only when
+        # the room is full at that moment (the weekly part is the Official check's).
+        _blk = _shared_room_request_block(semester_id, day, start_t, end_t, room_id, requester,
+                                          on_date=on_date, from_date=from_date,
+                                          exclude_schedule_ids=[exclude_schedule_id] if exclude_schedule_id else None)
+        return _blk if _blk and _blk.get('src') == 'makeup' else None
     where = ["c2.status = 'Approved'", "sc2.semesterid = %s",
              "ts_s.timevalue < %s", "ts_e.timevalue > %s"]
     params = [semester_id, end_t, start_t]
@@ -5035,6 +5128,154 @@ def _request_merge_over_limit(semester_id, requester, partners):
         conn.rollback(); cur.close(); conn.close()
 
 
+def _shared_room_occupants(semester_id, day, start_t, end_t, room_id, *, exclude_official_sessionid=None,
+                           exclude_schedule_ids=None, on_date=None, from_date=None,
+                           exclude_local_section_id=None):
+    """Everything in a SHARED room (Settings > Shared Rooms) overlapping day/start-end:
+    effective Official sessions, active Published Local sessions and — when a date is
+    given — approved make-ups on it (on_date) or on that weekday from a date (from_date).
+    Each item: (start, end, section_key, row) for shared_rooms.check_join."""
+    ex_off = exclude_official_sessionid
+    ex_off = [int(x) for x in ex_off if x is not None] if isinstance(ex_off, (list, tuple, set)) \
+        else ([int(ex_off)] if ex_off is not None else [])
+    ex_sch = [int(x) for x in (exclude_schedule_ids or []) if x is not None]
+    rows = query_db("""
+        SELECT 'official' AS src, ts_s.timevalue AS st, ts_e.timevalue AS et, sc2.sectionid,
+               UPPER(cs.subjectcode) AS subjectcode, sc2.employeenumber, sec.sectionname, pyl.programcode,
+               NULL::date AS requested_date,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM') AS start_t, TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS end_t
+        FROM schedule_sessions ss
+        JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
+        JOIN schedule sc2 ON sv.scheduleid = sc2.scheduleid
+        JOIN curriculumsubject cs ON sc2.curriculumsubjectid = cs.curriculumsubjectid
+        LEFT JOIN sections sec ON sc2.sectionid = sec.sectionid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
+        JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+        WHERE sc2.semesterid = %(sem)s AND ss.roomid = %(room)s AND UPPER(ss.daydesc) = UPPER(%(day)s)
+          AND ts_s.timevalue < %(et)s AND ts_e.timevalue > %(st)s
+          AND NOT (ss.sessionid = ANY(%(ex_off)s)) AND NOT (sc2.scheduleid = ANY(%(ex_sch)s))
+          AND NOT EXISTS (SELECT 1 FROM public.local_arrangement la_x
+                          JOIN public.local_arrangement_sessions las_x ON las_x.arrangementid = la_x.arrangementid
+                          WHERE la_x.status = 'Published' AND la_x.is_active = TRUE
+                            AND la_x.semesterid = sc2.semesterid AND la_x.sectionid = sc2.sectionid
+                            AND las_x.official_sessionid = ss.sessionid)
+        UNION ALL
+        SELECT 'local', ts_s.timevalue, ts_e.timevalue, la.sectionid, UPPER(las.subjectcode),
+               las.faculty_employeenumber, sec.sectionname, la.programcode, NULL::date,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM'), TO_CHAR(ts_e.timevalue,'HH12:MI AM')
+        FROM public.local_arrangement_sessions las
+        JOIN public.local_arrangement la ON las.arrangementid = la.arrangementid
+        JOIN public.timeslot ts_s ON las.starttimeid = ts_s.timeid
+        JOIN public.timeslot ts_e ON las.endtimeid = ts_e.timeid
+        LEFT JOIN public.sections sec ON la.sectionid = sec.sectionid
+        WHERE la.status = 'Published' AND la.is_active = TRUE AND la.semesterid = %(sem)s
+          AND las.roomid = %(room)s AND UPPER(las.daydesc) = UPPER(%(day)s)
+          AND ts_s.timevalue < %(et)s AND ts_e.timevalue > %(st)s
+          AND (las.official_sessionid IS NULL OR NOT (las.official_sessionid = ANY(%(ex_off)s)))
+          AND (%(ex_loc)s::int IS NULL OR la.sectionid <> %(ex_loc)s::int)
+        UNION ALL
+        SELECT 'makeup', ts_s.timevalue, ts_e.timevalue, sc2.sectionid, UPPER(cs.subjectcode),
+               sc2.employeenumber, sec.sectionname, pyl.programcode, c2.requested_date,
+               TO_CHAR(ts_s.timevalue,'HH12:MI AM'), TO_CHAR(ts_e.timevalue,'HH12:MI AM')
+        FROM class_meeting_request c2
+        JOIN schedule sc2 ON c2.scheduleid = sc2.scheduleid
+        JOIN curriculumsubject cs ON sc2.curriculumsubjectid = cs.curriculumsubjectid
+        LEFT JOIN sections sec ON sc2.sectionid = sec.sectionid
+        LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+        JOIN timeslot ts_s ON c2.new_starttimeid = ts_s.timeid
+        JOIN timeslot ts_e ON c2.new_endtimeid = ts_e.timeid
+        WHERE c2.status = 'Approved' AND sc2.semesterid = %(sem)s AND c2.new_roomid = %(room)s
+          AND ts_s.timevalue < %(et)s AND ts_e.timevalue > %(st)s
+          AND NOT (sc2.scheduleid = ANY(%(ex_sch)s))
+          AND ((%(on_date)s::date IS NOT NULL AND c2.requested_date = %(on_date)s::date)
+               OR (%(from_date)s::date IS NOT NULL AND c2.requested_date >= %(from_date)s::date
+                   AND UPPER(TO_CHAR(c2.requested_date, 'FMDay')) = UPPER(%(day)s)))
+    """, {'sem': semester_id, 'room': int(room_id), 'day': day, 'st': start_t, 'et': end_t,
+          'ex_off': ex_off, 'ex_sch': ex_sch, 'on_date': on_date, 'from_date': from_date,
+          'ex_loc': exclude_local_section_id}) or []
+    out = []
+    for r in rows:
+        src = r.get('src') or 'official'
+        key = f"{src[0]}{r.get('sectionid') or r.get('sectionname') or id(r)}"
+        if src == 'makeup' and r.get('requested_date') is not None:
+            key += f"@{r['requested_date']}"
+        if r.get('st') is None or r.get('et') is None:
+            continue
+        out.append((r['st'], r['et'], key, dict(r)))
+    return out
+
+
+def _sr_iv(o):
+    """An _shared_room_occupants item as a shared_rooms interval (with its subject's
+    Class Merging tag: two NSTP classes may partly overlap in a shared room)."""
+    return (o[0], o[1], o[2], _shared_rooms.flex_tag((o[3] or {}).get('subjectcode')))
+
+
+def _timeslot_values(cur, *ids):
+    """{timeid: timevalue} for the given timeslot ids."""
+    ids = [int(i) for i in ids if str(i or '').isdigit()]
+    if not ids:
+        return {}
+    cur.execute("SELECT timeid, timevalue FROM timeslot WHERE timeid = ANY(%s)", (ids,))
+    return {(r['timeid'] if isinstance(r, dict) else r[0]): (r['timevalue'] if isinstance(r, dict) else r[1])
+            for r in cur.fetchall() or []}
+
+
+def _local_shared_room_conflict(cur, semester_id, section_id, ds, exclude_official_ids=()):
+    """A Local session `ds` (daydesc/starttimeid/endtimeid/roomid/subjectcode) in a SHARED
+    room: the conflict record when it would put the room over its limit, else None. This
+    section's own active Local sessions are left out (the Draft being checked replaces
+    them), as are the Official occurrences it supersedes."""
+    lim = _shared_rooms.limit_for(ds.get('roomid'))
+    if not lim:
+        return None
+    tv = _timeslot_values(cur, ds.get('starttimeid'), ds.get('endtimeid'))
+    st, et = tv.get(int(ds['starttimeid'])), tv.get(int(ds['endtimeid']))
+    if st is None or et is None:
+        return None
+    ex = [x for x in (exclude_official_ids or []) if x is not None]
+    if ds.get('official_sessionid') is not None:
+        ex.append(ds.get('official_sessionid'))
+    occ = _shared_room_occupants(semester_id, ds['daydesc'], st, et, ds['roomid'],
+                                 exclude_official_sessionid=ex, exclude_local_section_id=section_id)
+    # This section's own Official classes there (not moved) are the same section: one seat.
+    occ = [o for o in occ if not (o[3].get('src') == 'official' and str(o[3].get('sectionid')) == str(section_id))]
+    res = _shared_rooms.check_join([_sr_iv(o) for o in occ],
+                                   [(st, et, f'me{section_id}', _shared_rooms.flex_tag(ds.get('subjectcode')))], lim)
+    if res['ok']:
+        return None
+    if res['reason'] == 'partial':
+        detail = "Shared room: another class there only partly overlaps — classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap)."
+    else:
+        detail = f"Shared room is full: {res['count']} sections at that time (limit {lim})."
+    return {'source': 'Shared room', 'subjectcode': None, 'candidate_subject': ds.get('subjectcode'),
+            'dimensions': ['Room'], 'shared_room_full': res['reason'] == 'full', 'shared_room_limit': lim,
+            'shared_room_reason': res['reason'], 'detail': detail}
+
+
+def _shared_room_request_block(semester_id, day, start_t, end_t, room_id, requester=None, **kw):
+    """The occupant to report when a request's class can't join a shared room (it would
+    put the room over its limit), else None. None too when the room isn't shared."""
+    lim = _shared_rooms.limit_for(room_id)
+    if not lim:
+        return None
+    occ = _shared_room_occupants(semester_id, day, start_t, end_t, room_id, **kw)
+    mine = 'req' + str((requester or {}).get('sectionid') or '')
+    res = _shared_rooms.check_join([_sr_iv(o) for o in occ],
+                                   [(start_t, end_t, mine, _shared_rooms.flex_tag((requester or {}).get('subjectcode')))],
+                                   lim)
+    if res['ok']:
+        return None
+    w = res['with']
+    here = [o[3] for o in occ if (o[0], o[1]) == w] or [o[3] for o in occ]
+    row = dict(here[0]) if here else {}
+    if res['reason'] == 'full':
+        row['shared_room_full'] = True          # the exact time has no seats left
+    row['shared_room_limit'] = lim
+    return row
+
+
 def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None,
                                employee_number=None, programyearlevelid=None, section_id=None,
                                requester=None, exclude_official_sessionid=None,
@@ -5049,6 +5290,12 @@ def _request_official_conflict(semester_id, day, start_t, end_t, *, room_id=None
     class (cohort guard)."""
     if not semester_id or not day or start_t is None or end_t is None:
         return None
+    if room_id is not None and _shared_rooms.limit_for(room_id):
+        # Shared room: Official + Local occupants counted together against its limit.
+        _ex_sch = list(exclude_schedule_ids or []) + ([exclude_schedule_id] if exclude_schedule_id else [])
+        return _shared_room_request_block(semester_id, day, start_t, end_t, room_id, requester,
+                                          exclude_official_sessionid=exclude_official_sessionid,
+                                          exclude_schedule_ids=_ex_sch)
     where = ["sv.status = 'Published'", "sc2.semesterid = %s", "UPPER(ss.daydesc) = UPPER(%s)",
              "ts_s.timevalue < %s", "ts_e.timevalue > %s",
              """NOT EXISTS (
@@ -17549,6 +17796,8 @@ def manual_schedule_editor():
             day_pairs_json = json.dumps([["Monday","Thursday"],["Tuesday","Friday"],["Wednesday","Saturday"]])
 
         return render_template('academic/manualScheduleEditor.html',
+                               shared_room_limits_json=json.dumps(_shared_rooms.limits()),
+                               shared_room_flex_json=json.dumps(_shared_rooms.flex_rules()),
                                scheduler_mode=scheduler_mode,
                                is_acad_head=is_acad_head,
                                # Lets the editor tell when the open subject is the Academic
@@ -19641,6 +19890,13 @@ def api_publish_local_arrangement(arr_id):
             )
             return [d for d in _dim_order if d in dims]
 
+        _publish_conflict_dims_pair = _publish_conflict_dims
+
+        def _publish_conflict_dims(ds, occ, occ_faculty):
+            dims = _publish_conflict_dims_pair(ds, occ, occ_faculty)
+            # A shared room is checked by count (below), not pair by pair.
+            return [d for d in dims if not (d == 'Room' and _shared_rooms.limit_for(ds.get('roomid')))]
+
         for ds in draft_sessions:
             # Effective Official occupancy: only the exact Official occurrence
             # referenced by official_sessionid is superseded.
@@ -19771,6 +20027,11 @@ def api_publish_local_arrangement(arr_id):
                 if dims:
                     conflicts.append({'source':'Local','subjectcode':occ.get('subjectcode'),
                                       'candidate_subject':ds.get('subjectcode'),'dimensions':dims})
+
+            # Shared room: everything in it counted against its limit of sections.
+            _src = _local_shared_room_conflict(cur, arr['semesterid'], arr['sectionid'], ds, proposed_official_ids)
+            if _src:
+                conflicts.append(_src)
 
         if conflicts:
             conn.rollback(); cur.close(); conn.close()
@@ -20462,7 +20723,8 @@ def api_local_check_room_conflicts():
                                        'programcode':program.upper()}, r)
                 # HC10/HC11 merge exemptions apply only to Faculty/Room. HC12
                 # remains an exclusive-resource check for the same student section.
-                if not merged and c['roomid'] is not None and r.get('roomid') == c['roomid']:
+                if (not merged and c['roomid'] is not None and r.get('roomid') == c['roomid']
+                        and not _shared_rooms.limit_for(c['roomid'])):     # shared room: by count below
                     _add(r,'Room')
                 if (faculty_load.has_assigned_faculty(c['employeenumber'])
                         and r.get('employeenumber') == c['employeenumber']
@@ -20505,7 +20767,8 @@ def api_local_check_room_conflicts():
                                        'programcode':program.upper()}, r)
                 # HC10/HC11 merge exemptions apply only to Faculty/Room. HC12
                 # remains an exclusive-resource check for the same student section.
-                if not merged and c['roomid'] is not None and r.get('roomid') == c['roomid']:
+                if (not merged and c['roomid'] is not None and r.get('roomid') == c['roomid']
+                        and not _shared_rooms.limit_for(c['roomid'])):     # shared room: by count below
                     _add(r,'Room')
                 if (faculty_load.has_assigned_faculty(c['employeenumber'])
                         and r.get('employeenumber') == c['employeenumber']
@@ -20557,6 +20820,18 @@ def api_local_check_room_conflicts():
                             {**c, 'sectionid':section_id, 'sectionname':current_section_name,
                              'programcode':program.upper()}, r, merged):
                         _add(r,'Faculty')
+
+        # Shared rooms: every candidate counted with everything else in the room.
+        for c in candidates:
+            _src = _local_shared_room_conflict(cur, sem_id, section_id, c, proposed_official_ids)
+            if _src:
+                _add({'source': 'Shared room', 'sectionid': None, 'sectionname': '',
+                      'subjectcode': (f"Shared room full ({_src['shared_room_limit']} sections max)"
+                                      if _src.get('shared_room_full')
+                                      else 'Shared room: only the exact same time can share'),
+                      'daydesc': c['daydesc'], 'start_fmt': str(c['starttimeid']), 'end_fmt': str(c['endtimeid']),
+                      'roomid': c['roomid'], 'instructor': '—', 'programcode': '', 'yearlevel': '',
+                      'conflicts_with_subject': c['subjectcode']}, 'Room')
 
         cur.close(); conn.close()
         return jsonify({'success':True,'conflicts':conflicts, 'constraint_rules': {k: list(v) for k, v in _EVAL_CRITERION_RULES.items()}})
@@ -22751,6 +23026,110 @@ def _subject_load_info(cur, subjectcode):
     row = cur.fetchone()
     return dict(row) if row else {}
 
+@app.route('/api/shared_rooms')
+@roles_required(ROLE_ADMIN, ROLE_ACAD_HEAD, ROLE_FACULTY)
+def api_shared_room_limits():
+    """{roomid: max sections at the same time} — Room Schedule pages mark shared rooms."""
+    return jsonify({'success': True, 'limits': _shared_rooms.limits()})
+
+
+@app.route('/admin/settings/shared_rooms', methods=['GET'])
+@roles_required(ROLE_ADMIN)
+def api_list_shared_rooms():
+    """Shared rooms (several sections at once, up to a limit) + the rooms that can be added."""
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_rooms.ensure_table(cur)
+        cur.execute("""
+            SELECT p.roomid, p.max_sections, p.updated_by,
+                   TO_CHAR(p.updated_at, 'YYYY-MM-DD HH12:MI AM') AS updated_at,
+                   r.roomname, r.roomtype, b.buildingname
+            FROM public.shared_room_policy p
+            JOIN public.room r ON r.roomid = p.roomid
+            LEFT JOIN public.building b ON b.buildingid = r.buildingid
+            ORDER BY b.buildingname NULLS LAST, r.roomname""")
+        policies = [dict(r) for r in cur.fetchall()]
+        cur.execute("""
+            SELECT r.roomid, r.roomname, r.roomtype, b.buildingname
+            FROM public.room r LEFT JOIN public.building b ON b.buildingid = r.buildingid
+            WHERE COALESCE(r.isactive, TRUE) = TRUE
+            ORDER BY b.buildingname NULLS LAST, r.roomname""")
+        rooms = [dict(r) for r in cur.fetchall()]
+        conn.commit()
+        return jsonify({'success': True, 'policies': policies, 'rooms': rooms})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/shared_rooms', methods=['POST'])
+@roles_required(ROLE_ADMIN)
+def api_save_shared_room():
+    """Add or change a shared room: {roomid, max_sections (2-50)}."""
+    data = request.get_json(silent=True) or {}
+    try:
+        room_id = int(data.get('roomid'))
+        max_sections = int(data.get('max_sections'))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Choose a room and enter how many sections can share it.'}), 400
+    if not 2 <= max_sections <= 50:
+        return jsonify({'success': False, 'error': 'Sections at once must be from 2 to 50.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_rooms.ensure_table(cur)
+        cur.execute("SELECT roomname FROM public.room WHERE roomid = %s", (room_id,))
+        room = cur.fetchone()
+        if not room:
+            return jsonify({'success': False, 'error': 'That room no longer exists.'}), 404
+        cur.execute("SELECT max_sections FROM public.shared_room_policy WHERE roomid = %s", (room_id,))
+        before = cur.fetchone()
+        cur.execute("""
+            INSERT INTO public.shared_room_policy (roomid, max_sections, updated_by, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (roomid) DO UPDATE
+               SET max_sections = EXCLUDED.max_sections, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+        """, (room_id, max_sections, session.get('username')))
+        _write_activity_log_tx(
+            cur, 'Shared Room Updated' if before else 'Shared Room Added',
+            (f"Room {room['roomname']}: up to {max_sections} sections at once"
+             + (f" (was {before['max_sections']})" if before else '')),
+            category='settings', color=_LOG_COLORS['settings'])
+        conn.commit()
+        _shared_rooms.invalidate()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/shared_rooms/<int:room_id>', methods=['DELETE'])
+@roles_required(ROLE_ADMIN)
+def api_delete_shared_room(room_id):
+    """Make a shared room a normal room again (one class at a time)."""
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_rooms.ensure_table(cur)
+        cur.execute("""DELETE FROM public.shared_room_policy p USING public.room r
+                       WHERE p.roomid = %s AND r.roomid = p.roomid RETURNING r.roomname""", (room_id,))
+        row = cur.fetchone()
+        if row:
+            _write_activity_log_tx(cur, 'Shared Room Removed',
+                                   f"Room {row['roomname']} is a normal room again (one class at a time)",
+                                   category='settings', color=_LOG_COLORS['settings'])
+        conn.commit()
+        _shared_rooms.invalidate()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
 @app.route('/admin/settings/merge_load_policies/subject_preview', methods=['GET'])
 @roles_required(ROLE_ADMIN)
 def api_merge_load_policy_subject_preview():
@@ -24168,6 +24547,25 @@ def _merge_occupancy_policy(ay_id, semester):
     if sig is not None:
         _merge_occ_policy_cache[key] = (sig, policy)
     return policy
+
+
+@app.route('/api/manual/merge_limit')
+@roles_required(*STAFF_ROLES)
+def api_manual_merge_limit():
+    """{limit}: the most sections one merged class of `subject` may have (Settings → Class
+    Merging, e.g. NSTP 2–3 → 3), or null when no rule covers it. The Manual Editor uses it
+    to offer a faculty's merge slot only while the class still has room for this section;
+    Save Draft / Publish apply the same limit (merge_groups.detect_merges)."""
+    import merge_groups as _mg
+    code = (request.args.get('subject') or '').strip()
+    try:
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            return jsonify({'success': True, 'limit': _mg.merge_section_limit(cur, code)})
+        finally:
+            cur.close(); conn.close()
+    except Exception as e:
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
 
 
 @app.route('/api/manual/merge_context', methods=['GET', 'POST'])
@@ -29227,6 +29625,7 @@ def admin_activity_logs_api():
     if session.get('role') != 'Admin':
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     _ensure_activity_log_table()
+    _purge_old_activity_logs()          # entries past the retention period never show
     if request.args.get('all') == '1':
         limit, offset = 20000, 0
     else:
@@ -29380,6 +29779,7 @@ def admin_settings():
         # First page only; the table loads more / filters through /admin/settings/activity_logs
         # (every user's entries — Admin, Academic Head, Faculty, System).
         _ensure_activity_log_table()
+        _purge_old_activity_logs()      # entries past the retention period never show
         try:
             activity_logs, activity_log_total = _activity_log_rows({}, limit=100)
             activity_log_users = [dict(r) for r in (query_db(f"""
@@ -29439,6 +29839,7 @@ def admin_settings():
                                activity_log_total=activity_log_total,
                                activity_log_users=activity_log_users,
                                activity_log_categories=activity_log_categories,
+                               activity_log_retention_days=ACTIVITY_LOG_RETENTION_DAYS,
                                current_ay_label=current_ay_label,
                                current_sem_label=current_sem_label,
                                max_existing_year_end=max_existing_year_end)
@@ -35434,6 +35835,8 @@ def api_faculty_my_teaching_load():
             'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
             'regular':  [_row(g) for g in buckets['groupedReg']],
             'partTime': [_row(g) for g in buckets['groupedPt']],
+            # Teaching Substitution: the classes past the Regular / Part-time caps.
+            'ts':       [_row(g) for g in buckets['tsSessions']],
             'totals': {
                 'regularUnits':   buckets['regUsed'],
                 'partTimeUnits':  buckets['ptUsed'],
@@ -35578,6 +35981,8 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
         'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
         'regular':  [_row(g) for g in buckets['groupedReg']],
         'partTime': [_row(g) for g in buckets['groupedPt']],
+        # Teaching Substitution: the classes past the Regular / Part-time caps.
+        'ts':       [_row(g) for g in buckets['tsSessions']],
         'totals': {
             'regularUnits':   buckets['regUsed'],
             'partTimeUnits':  buckets['ptUsed'],
@@ -35910,17 +36315,20 @@ def api_search():
             sub = ' · '.join(filter(None, [row.get('roomtype'), row.get('buildingname')]))
             results.append({'category': 'Room', 'label': row['roomname'], 'sub': sub, 'url': room_url, 'icon': 'fa-door-open'})
 
-        # Faculty/Employees — all roles (Faculty role shows info-only, no nav)
-        cur.execute("""
+        # Faculty/Employees — all roles (Faculty role shows info-only, no nav). Only Admin and
+        # the Academic Head may look a faculty up by employee number; for a faculty account
+        # the ID is private, so it is not searchable (names only).
+        _by_id = role in ('Academic Head', 'Admin')
+        cur.execute(f"""
             SELECT f.employeenumber, f.firstname, f.lastname, s.specializationname
             FROM faculty f
             LEFT JOIN specialization s ON f.specializationid = s.specializationid
             WHERE f.employeestatus != 'Archive'
               AND (f.firstname ILIKE %s OR f.lastname ILIKE %s
-                   OR f.employeenumber ILIKE %s
+                   {'OR f.employeenumber ILIKE %s' if _by_id else ''}
                    OR CONCAT(f.firstname, ' ', f.lastname) ILIKE %s)
             ORDER BY f.lastname LIMIT 5
-        """, (like, like, like, like))
+        """, (like, like, like, like) if _by_id else (like, like, like))
         if role == 'Academic Head':
             emp_url = '/employee'
         elif role == 'Admin':
@@ -36381,7 +36789,22 @@ def api_faculty_blocked_times():
         # When a specific room is provided, also block times that room is already occupied
         # so the time dropdown grays out those slots before the user selects them.
         if str(room_id).isdigit():
-            blocked += _live_blocks("es.roomid = %s", [int(room_id)], 'room')
+            _room_rows = _live_blocks("es.roomid = %s", [int(room_id)], 'room')
+            _lim = _shared_rooms.limit_for(room_id)
+            if _lim:
+                # Shared room: only the spans where it already holds its limit of sections.
+                from datetime import datetime as _dt
+                _ivs = [(r['start_raw'], r['end_raw'], f"{r.get('sectionname')}|{i}",
+                         _shared_rooms.flex_tag(r.get('subjectcode'))) for i, r in enumerate(_room_rows)]
+                _full = set(_shared_rooms.full_spans(_ivs, _lim))
+                for r in _room_rows:
+                    r['shared_room_limit'] = _lim
+                    r['shared_room_full'] = (r['start_raw'], r['end_raw']) in _full
+                # The request form greys out only the full times; a time that only partly
+                # overlaps a class there is refused on submit with the reason (the form
+                # can't express "this exact time only").
+                _room_rows = [r for r in _room_rows if r['shared_room_full']]
+            blocked += _room_rows
         # When a section is provided, also block times that section already has another class.
         if str(section_id).isdigit():
             blocked += _live_blocks("es.sectionid = %s", [int(section_id)], 'section')
@@ -36943,13 +37366,22 @@ def _makeup_submit_problems(subject, section_id, faculty_empno, request_date, st
 
     # Room
     r = _request_official_conflict(sem_id, day, st_t, et_t, room_id=rid, requester=requester)
-    if r:
+    if r and r.get('shared_room_full'):
+        _add('room', f"Room {room['roomname']} is a shared room for up to {r.get('shared_room_limit')} sections "
+                     f"at once, and it is already full at that time on {when}.")
+    elif r and r.get('shared_room_limit'):
+        _add('room', f"Room {room['roomname']} is a shared room: it is used by {r.get('subjectcode')}{_span(r)} "
+                     f"on {when}. Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
+    elif r:
         _add('room', f"Room {room['roomname']} is used by {r.get('subjectcode')}"
                      f"{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}{_span(r)} on {when}.")
     else:
         r = _request_makeup_occupancy(sem_id, day, st_t, et_t, on_date=req_date, room_id=rid,
                                       requester=requester, exclude_request_id=exclude_request_id)
-        if r:
+        if r and r.get('shared_room_full'):
+            _add('room', f"Room {room['roomname']} is a shared room for up to {r.get('shared_room_limit')} sections "
+                         f"at once, and approved make-up classes fill it at that time on {when}.")
+        elif r:
             _add('room', f"Room {room['roomname']} is booked by an approved make-up class of {r.get('subjectcode')}{_span(r)} on {when}.")
         elif _request_local_conflict(sched_id, day, st_t, et_t, room_id=rid, requester=requester):
             _add('room', f"Room {room['roomname']} is used by a Local arrangement at that time on {when}.")
@@ -37544,9 +37976,21 @@ def api_faculty_check_request_conflicts():
             _rl = f"Room {_rn}" if _rn != 'The selected room' else _rn
             r3 = _official(room_id=int(room_id))
             mk3 = None if r3 else _makeup(room_id=int(room_id))
-            if r3:
+            if r3 and r3.get('shared_room_full'):
+                room_conflict = True
+                room_detail = (f"{_rl} is a shared room for up to {r3.get('shared_room_limit')} sections at once, "
+                               f"and it is already full at that time on {when}.")
+            elif r3 and r3.get('shared_room_limit'):
+                room_conflict = True
+                room_detail = (f"{_rl} is a shared room: it is used by {_cls(r3)}{_span(r3)} on {when}. "
+                               f"Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
+            elif r3:
                 room_conflict = True
                 room_detail = f"{_rl} is used by {_cls(r3)}{_span(r3)} on {when}."
+            elif mk3 and mk3.get('shared_room_full'):
+                room_conflict = True
+                room_detail = (f"{_rl} is a shared room for up to {mk3.get('shared_room_limit')} sections at once, "
+                               f"and an approved make-up class fills it at that time on {when}.")
             elif mk3:
                 room_conflict = True
                 room_detail = f"{_rl} is booked by an approved make-up class of {mk3.get('subjectcode')}{_span(mk3)} on {when}."
@@ -40810,6 +41254,61 @@ def _hc16_member_faculty_conflicts(rows, policy, sem_id, section_id, cur=None):
     return [_label_violation(v) for v in policy.faculty_conflicts(rows, live)]
 
 
+def _fmt_t12(t):
+    try:
+        from scheduler import format_time_12h
+        return format_time_12h(t)
+    except Exception:
+        return str(t)
+
+
+def _shared_room_cross_violations(schedule_data, existing, shared, section_id=None, seen=None):
+    """HC11 for shared rooms between `schedule_data` (the rows being saved) and
+    `existing` (other sections' sessions: roomid/day/start_time/end_time/sectionid)."""
+    from constraints import context_conflicts as _ctx_conflicts
+    seen = seen if seen is not None else set()
+    out = []
+    rows = []
+    for c in schedule_data:
+        rid = c.get('room_id') or c.get('roomid')
+        if not _shared_rooms.limit_for(rid, shared) or not c.get('start_time') or not c.get('end_time'):
+            continue
+        sec = str(c.get('section_id') or c.get('sectionid') or section_id or c.get('section_name') or '')
+        for d in (c.get('days_list') or ([c['day']] if c.get('day') else [])):
+            if d:
+                rows.append((c, str(rid).strip(), d, sec))
+    for i, (c, rid, d, sec) in enumerate(rows):
+        lim = _shared_rooms.limit_for(rid, shared)
+        _tag = lambda x: _shared_rooms.flex_tag(x.get('subject_code') or x.get('subjectcode'))
+        others = [(ex['start_time'], ex['end_time'], 'x' + str(ex.get('sectionid') or ex.get('sectionname') or id(ex)),
+                   _tag(ex))
+                  for ex in existing
+                  if str(ex.get('roomid') or '').strip() == rid and ex.get('day') == d]
+        others += [(o['start_time'], o['end_time'], 'n' + osec, _tag(o)) for j, (o, orid, od, osec) in enumerate(rows)
+                   if j != i and orid == rid and od == d and osec != sec]
+        res = _shared_rooms.check_join(others, [(c['start_time'], c['end_time'], 'n' + sec, _tag(c))], lim)
+        if res['ok']:
+            continue
+        sc = (c.get('subject_code') or c.get('subjectcode') or '?').upper()
+        key = ('HC11-shared', rid, d, sc, sec)
+        if key in seen:
+            continue
+        seen.add(key)
+        rm = c.get('room') or c.get('roomname') or rid
+        w0, w1 = res['with']
+        if res['reason'] == 'partial':
+            detail = (f"Shared room {rm} already has a class on {d} {_fmt_t12(w0)}–{_fmt_t12(w1)}. "
+                      f"Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
+        else:
+            detail = (f"Shared room {rm} would have {res['count']} sections at once on {d} "
+                      f"{_fmt_t12(w0)}–{_fmt_t12(w1)} — its limit is {lim} sections.")
+        out.append({
+            'rule': 'HC11', 'type': RULE_LABELS['HC11'], 'subject': sc, 'target_subject_code': sc,
+            'detail': detail, 'affected_components': ['room', 'day', 'time'],
+        })
+    return out
+
+
 def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, acad_year_id, section_id=None,
                                     fail_closed=False, include_drafts=False, merge_cur=None):
     """
@@ -41025,6 +41524,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
     violations = []
     seen       = set()
     from constraints import context_conflicts as _ctx_conflicts
+    _shared = _shared_rooms.limits()        # Settings > Shared Rooms: checked by count below
 
     for new_cls in schedule_data:
         r_new   = new_cls.get('room_id') or new_cls.get('roomid')
@@ -41087,6 +41587,8 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                 for dim in dims:
                     if not _dim_enabled.get(dim, True):
                         continue
+                    if dim == 'Room' and _shared_rooms.limit_for(r_new, _shared):
+                        continue            # shared room: counted against its limit below
                     rule = {'Faculty': 'HC10', 'Room': 'HC11', 'Section': 'HC12'}[dim]
                     key = (rule, str(fac_new if dim == 'Faculty' else r_new if dim == 'Room' else sec_new),
                            day_new, sc_new, ex['subjectcode'])
@@ -41119,6 +41621,12 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
                     if dim == 'Faculty':
                         violation['faculty_id'] = fac_new
                     violations.append(violation)
+
+    # Shared rooms: each new class may join the room as long as, counting every section
+    # already in it (other sections' Published — and on Publish, Draft — classes) and this
+    # schedule's own classes there, no moment goes over the room's limit.
+    if _dim_enabled.get('Room', True) and _shared:
+        violations += _shared_room_cross_violations(schedule_data, published, _shared, section_id, seen)
 
     if violations:
         print(f'[CONFLICT] Total cross-section conflicts after repair: {len(violations)}')

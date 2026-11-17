@@ -59,6 +59,9 @@ class Config:
     EMAIL_PROVIDER  = os.environ.get('EMAIL_PROVIDER', '').strip().lower()
     EMAIL_FROM      = os.environ.get('EMAIL_FROM', '').strip()
     EMAIL_FROM_NAME = os.environ.get('EMAIL_FROM_NAME', 'PUP Lopez Scheduling System').strip()
+    # Optional security inbox: also receives the "account temporarily locked" alert for
+    # Admin and Academic Head accounts (even ones with no email of their own).
+    SECURITY_ALERT_EMAIL = os.environ.get('SECURITY_ALERT_EMAIL', '').strip()
     BREVO_API_KEY   = os.environ.get('BREVO_API_KEY', '').strip()
     RESEND_API_KEY  = os.environ.get('RESEND_API_KEY', '').strip()
 

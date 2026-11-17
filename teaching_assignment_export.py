@@ -178,12 +178,18 @@ def _sections(d):
     t = d.get('totals') or {}
     out = [('REGULAR LOAD', d.get('regular') or [], 'Total REGULAR LOAD', t.get('regularUnits')),
            ('PART-TIME', d.get('partTime') or [], 'Total PART-TIME', t.get('partTimeUnits'))]
+    # Classes past the Regular / Part-time caps are Teaching Substitution: listed in their
+    # own section (only when there are any), so the form shows every assigned class.
+    if d.get('ts'):
+        out.append(('TEACHING SUBSTITUTION (TS)', d['ts'], 'Total TEACHING SUBSTITUTION (TS)', t.get('tsUnits')))
     return out
 
 
 
 
 def _ts_line(d):
+    if d.get('ts'):
+        return None             # already its own section (see _sections)
     ts = (d.get('totals') or {}).get('tsUnits')
     return ('Total TEACHING SUBSTITUTION (TS)', ts) if ts and float(ts) > 0 else None
 

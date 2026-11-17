@@ -234,6 +234,28 @@
 
 
     /* Pills inside room calendar */
+    /* Shared rooms: side-by-side classes + notes (same as static/css/room_schedule_grid.css) */
+    .frs-pill-split { padding: 5px 6px; }
+    .frs-pill-split .frs-pill-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .frs-shared-note { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: #eef6ff;
+      border: 1px solid #c6dcf5; color: #1f4f82; font-size: .74rem; line-height: 1.45; max-width: 640px; }
+    .frs-shared-note i { margin-right: 4px; }
+    .frs-room-shared { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+      background: #e3effc; color: #1f4f82; font-size: .62rem; font-weight: 800; vertical-align: middle; }
+    .frs-room-item.active .frs-room-shared { background: rgba(255,255,255,.25); color: #fff; }
+
+    .frs-pill-secs { display: inline-block; margin: 0 0 3px; padding: 0 6px; border-radius: 999px;
+  background: rgba(0,0,0,.12); font-size: .58rem; font-weight: 800; }
+    .frs-pill-narrow { padding: 4px 4px; }
+    .frs-pill-narrow .frs-pill-name, .frs-pill-narrow .frs-pill-meta { display: none; }
+    .frs-pill-narrow .frs-pill-code { font-size: .6rem; word-break: break-word; }
+    .frs-pill-narrow .frs-pill-time { font-size: .55rem; }
+
+    .frs-pill-stack { background: #eef1f5 !important; border-left-color: #7a8699 !important; color: #2c3e50; }
+    .frs-pill-stack .frs-pill-code { margin-bottom: 3px; }
+    .frs-stack-row { font-size: .6rem; padding: 2px 4px; margin: 1px 0; border-radius: 4px; background: rgba(255,255,255,.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .frs-stack-row:hover { background: #fff; box-shadow: 0 0 0 1px #c9d2de; }
     .frs-pill {
         position: absolute;
         left: 3px;
@@ -3913,7 +3935,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!el) return;
         el.min = today;
         // A typed date bypasses the picker's min: clear it instead of keeping a past date.
-        el.addEventListener('change', () => { if (el.value && el.value < el.min) el.value = ''; }, true);
+        // While the year is still being typed (2 → 0002, 20 → 0020 …) it is not a real
+        // date yet — clearing it then wiped the field on the first digit. Check once the
+        // year is complete, and again when leaving the field.
+        const _past = partial => el.value && el.value < el.min && (partial || parseInt(el.value, 10) >= 1000);
+        el.addEventListener('change', () => { if (_past(false)) el.value = ''; }, true);
+        el.addEventListener('blur', () => { if (_past(true)) { el.value = ''; el.dispatchEvent(new Event('change')); } });
     });
 });
 

@@ -72,6 +72,20 @@
         box-shadow: 0 0 0 4px rgba(240,192,48,0.35), 2px 2px 8px rgba(0,0,0,0.3) !important;
         transform: scale(1.04);
     }
+    /* ── The open subject's slices: raised + "SLICE n" tag; the selected one keeps the gold ring ── */
+    .schedule-pill.pill-slice-sibling {
+        outline: 2.5px solid #2c3e50; outline-offset: 1px; z-index: 20 !important;
+        box-shadow: 0 0 0 4px rgba(255,255,255,0.9), 3px 5px 12px rgba(0,0,0,0.38) !important;
+        transform: translateY(-1px);
+    }
+    .schedule-pill.pill-slice-sibling.pill-slice-active { transform: translateY(-1px) scale(1.02); }
+    .schedule-pill .pill-slice-tag {
+        position: absolute; top: 2px; left: 3px; z-index: 2; pointer-events: none;
+        padding: 0 5px; border-radius: 3px; font-size: .5rem; font-weight: 900; letter-spacing: .3px;
+        line-height: 1.5; white-space: nowrap; background: #2c3e50; color: #fff;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    }
+    .schedule-pill.pill-slice-active .pill-slice-tag { background: #f0c030; color: #3a2a00; }
     /* ── Subject-focus pill highlight — white glow when subject is selected from curriculum guide ── */
     .schedule-pill.pill-subject-focus {
         outline: 2.5px solid rgba(255,255,255,0.95) !important; outline-offset: 1px; z-index: 12 !important;
@@ -409,7 +423,7 @@
     .confirm-icon { font-size:2.4rem; color:#630100; margin-bottom:12px; }
     .confirm-title { color:#2c3e50; font-size:1.1rem; font-weight:900; margin:0 0 10px; letter-spacing:0.5px; text-transform:uppercase; }
     .confirm-message { color:#555; font-size:0.85rem; line-height:1.65; margin:0 0 26px; white-space:pre-line; }
-    .confirm-buttons { display:flex; gap:12px; justify-content:center; }
+    .confirm-buttons { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; }
     .confirm-btn-cancel { flex:1; max-width:140px; padding:10px; border:2px solid #bdc3c7;
         color:#7f8c8d; background:white; border-radius:6px; font-weight:800; font-size:0.82rem;
         cursor:pointer; transition:all 0.2s; }
@@ -1685,6 +1699,8 @@
 <!-- ── App init data ── -->
 <div id="app-init-data"
      data-rooms="{{ rooms_json | e }}"
+     data-shared-rooms="{{ shared_room_limits_json | default('{}') | e }}"
+     data-shared-flex="{{ shared_room_flex_json | default('[]') | e }}"
      data-faculty="{{ faculty_json | e }}"
      data-init-mode="{{ init_mode }}"
      data-init-prog="{{ init_prog }}"
@@ -1849,6 +1865,43 @@ function _activeSlicePillKey() {
     return (subjCode && day && startIdx > 0) ? `${subjCode}_${day}_${startIdx}` : '';
 }
 
+// The open subject's slices on the calendar: {pill key: slice number (1-based, panel order)}.
+// Every one is raised and labelled "SLICE n"; the selected one also gets the gold ring
+// (pill-slice-active) and "SELECTED" — so you see which pills belong together and which
+// one you are editing. Re-applied by the renderers (_markSlicePill) and on selection.
+function _slicePillKeys() {
+    const out = {};
+    const code = _currentSubjectCode || '';
+    if (!code || typeof document.querySelectorAll !== 'function') return out;
+    document.querySelectorAll('#time-slots-container > .ts-row').forEach((row, i) => {
+        const day = row.querySelector('.ts-day-sel')?.value || '';
+        const startIdx = _TS_TIMES.indexOf(row.querySelector('.ts-start-hidden')?.value || '') + 1;
+        const key = `${code}_${day}_${startIdx}`;
+        if (day && startIdx > 0 && !(key in out)) out[key] = i + 1;
+    });
+    return out;
+}
+
+function _markSlicePill(pill, keys) {
+    if (!pill || !pill.classList || !pill.dataset) return;
+    const n = (keys || _slicePillKeys())[pill.dataset.pillKey];
+    const active = pill.classList.contains('pill-slice-active');
+    pill.classList.toggle('pill-slice-sibling', !!n);
+    let tag = typeof pill.querySelector === 'function' ? pill.querySelector(':scope > .pill-slice-tag') : null;
+    if (!n) { tag?.remove(); return; }
+    if (!tag && typeof document.createElement === 'function') {
+        tag = document.createElement('span');
+        tag.className = 'pill-slice-tag';
+        pill.insertBefore(tag, pill.firstChild);
+    }
+    if (tag) tag.textContent = active ? `✓ SLICE ${n}` : `SLICE ${n}`;
+}
+
+function _refreshSlicePills() {
+    const keys = _slicePillKeys();
+    document.querySelectorAll('.schedule-pill').forEach(p => _markSlicePill(p, keys));
+}
+
 function _selectSlice(id, event) {
     if (event && event.target.closest('.ts-action-icon')) return;
     _activeSliceId = id;
@@ -1877,9 +1930,10 @@ function _selectSlice(id, event) {
 
 function _highlightAndScrollPill(pillKey) {
     document.querySelectorAll('.schedule-pill').forEach(p => p.classList.remove('pill-slice-active'));
-    if (!pillKey) return;
+    if (!pillKey) { _refreshSlicePills(); return; }
     const pills = document.querySelectorAll(`.schedule-pill[data-pill-key="${CSS.escape(pillKey)}"]`);
     pills.forEach(p => p.classList.add('pill-slice-active'));
+    _refreshSlicePills();
     // Scroll the first matching pill into view within the calendar container
     const first = pills[0];
     if (first) {
@@ -2199,6 +2253,39 @@ function _showPublishSelectModal(candidates, kept = []) {
     });
 }
 
+/* ── Styled dialog with any set of buttons (same look as showConfirmModal).
+   choices: [{ value, label, kind: 'ok'|'cancel' }]; resolves the chosen value
+   (Escape resolves the first choice). ── */
+function showChoiceModal(message, title, choices) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('confirmModal');
+        const row   = modal.querySelector('.confirm-buttons');
+        const keep  = Array.from(row.children);
+        keep.forEach(b => { b.style.display = 'none'; });
+        document.getElementById('confirmModalTitle').textContent  = title;
+        document.getElementById('confirmModalMessage').textContent = message;
+        const made = choices.map(c => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = c.kind === 'ok' ? 'confirm-btn-ok' : 'confirm-btn-cancel';
+            b.textContent = c.label;
+            b.addEventListener('click', () => done(c.value));
+            row.appendChild(b);
+            return b;
+        });
+        const onKey = e => { if (e.key === 'Escape') done(choices[0].value); };
+        document.addEventListener('keydown', onKey);
+        modal.classList.add('active');
+        function done(v) {
+            modal.classList.remove('active');
+            made.forEach(b => b.remove());
+            keep.forEach(b => { b.style.display = ''; });
+            document.removeEventListener('keydown', onKey);
+            resolve(v);
+        }
+    });
+}
+
 /* ── General styled confirm dialog (replaces native browser confirm()) ── */
 function showConfirmModal(message, title = 'Confirm') {
     return new Promise(resolve => {
@@ -2243,6 +2330,7 @@ function _confirmMergeNotice(data) {
                 <div style="font-size:.78rem;color:#566573;margin-top:3px;">
                     ${esc(m.day)} · ${esc(m.start_label)} – ${esc(m.end_label)} · ${esc(m.roomname)} · ${esc(m.faculty_name)}</div>
                 ${m.group ? `<div style="font-size:.72rem;color:#7f8c8d;margin-top:2px;">Joins merged class “${esc(m.group)}”</div>` : ''}
+                ${m.leaves_group ? `<div style="font-size:.72rem;color:#8a5a00;margin-top:2px;">${esc(m.section_label)} moved off merged class “${esc(m.leaves_group)}” and leaves it.</div>` : ''}
             </div>`;
         overlay.innerHTML = `
             <div style="background:#fff;border-radius:8px;padding:24px 26px;max-width:500px;width:92%;box-shadow:0 6px 32px rgba(0,0,0,.22);font-family:inherit;max-height:86vh;overflow:auto;">
@@ -2498,8 +2586,34 @@ function _flBuildLoadExceededMessage(check, subjectUnits, currentSubj, facName) 
         </div>`;
 }
 
+// Picking a faculty before a subject is open: clear the pick and list what to select first.
+async function _rejectFacultyWithoutSubject() {
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    const sf = document.getElementById('sel_faculty');      if (sf) sf.value = '';
+    const fd = document.getElementById('fac_display_name'); if (fd) fd.value = '';
+    const ft = document.getElementById('fac_trigger_text'); if (ft) ft.textContent = '-Select Faculty-';
+    try { await _updateFacultyUnitDisplay(''); } catch (e) {}
+    if (typeof _updateAssignFacultyBtn === 'function') _updateAssignFacultyBtn();
+    const missing = [['sel_ay', 'Academic Year'], ['sel_sem', 'Semester'], ['sel_prog', 'Program'],
+                     ['sel_year', 'Year Level'], ['sel_section', 'Section']]
+        .filter(([id]) => !v(id)).map(([, label]) => label);
+    const first = missing.length
+        ? `Select the ${missing.length > 1 ? missing.slice(0, -1).join(', ') + ' and ' + missing.slice(-1) : missing[0]} on the left, then pick a subject from the Curriculum Guide.`
+        : 'Pick a subject from the Curriculum Guide on the left.';
+    await showValidationModal('Select a Subject First',
+        `A faculty is assigned to a subject, and no subject is selected yet.
+
+${first} You can then choose its faculty here.`);
+}
+
 const _origOnFacultySelect = onFacultySelect;
 window.onFacultySelect = async function(empNum) {
+    // A faculty is assigned to a subject: with no subject open there is nothing to assign
+    // it to — undo the pick and say what to choose first (nothing is saved).
+    if (empNum && !_currentSubjectCode) {
+        await _rejectFacultyWithoutSubject();
+        return;
+    }
     // Captured before any await below runs — this pick belongs to whichever subject
     // panel was open at the moment it was made, not whatever _currentSubjectCode ends
     // up being once the awaits (faculty-load fetch, DSS check, etc.) resolve.
@@ -2635,6 +2749,7 @@ window.onFacultySelect = async function(empNum) {
             await _rejectConflictingFaculty(_fcMsg);
             return;
         }
+        _mgFacultyMergeRooms();   // a slice on this faculty's merge slot takes its room
     }
 
     if (empNum && typeof triggerDSSLogic === 'function') {
@@ -2663,7 +2778,8 @@ window.onFacultySelect = async function(empNum) {
     // Picking a faculty applies it right away — always, not only when slices exist (that
     // made the same action sometimes need an "Assign Faculty" click and sometimes not).
     // Outside a reassignment of a scheduled subject, this is exactly the button's action.
-    const _reassigning = window._pendingFacultyReassignSubject === _currentSubjectCode;
+    // (Both null when no subject is open — that is not a reassignment.)
+    const _reassigning = !!_currentSubjectCode && window._pendingFacultyReassignSubject === _currentSubjectCode;
     if (_selFacId && _currentSubjectCode && !_lockedFacultyId && !_reassigning &&
         !(_alreadySaved && String(_alreadySaved.id) === String(_selFacId))) {
         await assignFacultyToSubject();
@@ -2695,7 +2811,7 @@ window.onFacultySelect = async function(empNum) {
     // row(s) into pendingManualSchedule and saves — which itself chains into an
     // auto-publish when this subject was Published (see _reassignAutoPublishSubjects) —
     // covering both the Draft-only and the Published reassignment case end-to-end.
-    if (_selFacId && window._pendingFacultyReassignSubject === _currentSubjectCode) {
+    if (_selFacId && _currentSubjectCode && window._pendingFacultyReassignSubject === _currentSubjectCode) {
         window._pendingFacultyReassignSubject = null;
         if (window._facultyReassignInfo && window._facultyReassignInfo.code === _currentSubjectCode) {
             window._facultyReassignInfo.toName = _selFacName || 'TBA';
@@ -3117,8 +3233,40 @@ window.confirmAndPlace = async function() {
         return;
     }
 
+    // Shared room (Settings > Shared Rooms): several classes may use it at once — any
+    // subject, faculty or time — up to its limit of sections. Counted here instead of the
+    // one-class-per-room checks below.
+    let _sharedRoomOk = false;
+    if (_ruleOn.room && roomVal && roomVal !== 'TBA') {
+        const _sv = await _sharedRoomPlaceCheck(roomVal, dayVal, newStartIdx, newEndIdx, ay, sem);
+        if (_sv && !_sv.ok && _sv.reason === 'partial') {
+            const o = _sv.other;
+            await showConflictModal(_conflictDetail({
+                kind: 'room', code: o.code || 'Another class',
+                name: `${roomName} is a shared room — classes can share it only at exactly the same time (merge-set subjects like NSTP may overlap)`,
+                day: dayVal,
+                start: (typeof timeSlots !== 'undefined' ? timeSlots[o.s - 1] : o.s),
+                end: (typeof timeSlots !== 'undefined' ? timeSlots[o.e - 1] : o.e),
+                faculty: '—', section: o.label || '—', room: roomName,
+            }));
+            return;
+        }
+        if (_sv && !_sv.ok) {
+            await showConflictModal(_conflictDetail({
+                kind: 'room', code: 'Shared room full',
+                name: `${roomName} holds up to ${_sv.limit} sections at once and already has ${_sv.count - 1} at this time`,
+                day: dayVal,
+                start: (typeof timeSlots !== 'undefined' ? timeSlots[newStartIdx - 1] : newStartIdx),
+                end: (typeof timeSlots !== 'undefined' ? timeSlots[newEndIdx - 1] : newEndIdx),
+                faculty: '—', section: _sv.sections.join(', ') || '—', room: roomName,
+            }));
+            return;
+        }
+        _sharedRoomOk = !!_sv;
+    }
+
     // Room conflict — DB sessions (skip for TBA — no specific room assigned yet)
-    if (_ruleOn.room && _ruleOn.cross && roomVal && roomVal !== 'TBA') {
+    if (_ruleOn.room && _ruleOn.cross && roomVal && roomVal !== 'TBA' && !_sharedRoomOk) {
         try {
             const rResp = await fetch(`/api/get_room_schedule/${roomVal}?ay_id=${encodeURIComponent(ay)}&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
             const rSessions = await rResp.json();
@@ -3165,9 +3313,9 @@ window.confirmAndPlace = async function() {
         } catch(e) { console.error('DB room conflict check failed:', e); }
     }
 
-    // Room conflict — in-memory pending (skip for TBA)
+    // Room conflict — in-memory pending (skip for TBA; a shared room was counted above)
     if (_ruleOn.room && !_mergeConfirmed) {
-        for (const c of pendingManualSchedule) {
+        for (const c of (_sharedRoomOk ? [] : pendingManualSchedule)) {
             if (roomVal === 'TBA' || c.room_id === 'TBA') continue; // TBA has no specific room to conflict over
             if (window.currentEditSession && (c.temp_id === window.currentEditSession.temp_id || c.temp_id === window.currentEditSession._localTempId)) continue;
             if (String(c.room_id) === String(roomVal) && c.day === dayVal && c.ay === ay && c.sem === sem) {
@@ -3571,6 +3719,27 @@ async function _onCurriculumModeChange(mode) {
    The open subject's Time Slices are reloaded only when nothing here is unsaved, so
    in-progress work is never overwritten. */
 window.DSS_LIVE_SCHEDULE = true;
+// Settings > Shared Rooms: {roomid: max sections at once}. A shared room may hold several
+// classes at the same time (any subject, faculty or time) up to that many sections.
+window.SHARED_ROOM_LIMITS = (() => {
+    try { return JSON.parse(document.getElementById('app-init-data')?.dataset.sharedRooms || '{}'); }
+    catch (e) { return {}; }
+})();
+// Settings > Class Merging rule codes (e.g. ['NSTP']): in a shared room, two classes of
+// subjects under the same rule may partly overlap (shared_rooms.flex_tag on the server).
+window.SHARED_ROOM_FLEX = (() => {
+    try { return JSON.parse(document.getElementById('app-init-data')?.dataset.sharedFlex || '[]'); }
+    catch (e) { return []; }
+})();
+function _sharedFlexTag(code) {
+    const c = String(code || '').toUpperCase().split(/\s+/).filter(Boolean).join(' ');
+    if (!c) return null;
+    for (const r0 of (window.SHARED_ROOM_FLEX || [])) {
+        const r = String(r0 || '').toUpperCase().split(/\s+/).filter(Boolean).join(' ');
+        if (r === c || (r === 'NSTP' && (c.startsWith('NSTP') || c.startsWith('OU')))) return r;
+    }
+    return null;
+}
 let _liveRefreshPending = null;
 window.addEventListener('dss:schedule-changed', e => {
     e.preventDefault();                       // handled here — no "Refresh" banner
@@ -4231,7 +4400,7 @@ async function _onSubjectClick(code, name, units, hours) {
             _what.push(`${c.day || '—'} ${c.start_time || '—'}–${c.end_time || '—'} (placed, not saved)`));
         if (_hasBoardRemoval) _what.push('A published slice removed on the calendar (not yet published)');
         if ((_hasPendingSlices || _hasPendingFaculty) &&
-            !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty, _what))) return;
+            !(await _confirmSubjectSwitch(_hasPendingSlices, _hasPendingFaculty, _what, _hasBoardRemoval))) return;
         // Discarding: un-hide any Published slice of the old subject removed on the board.
         if (_hasBoardRemoval) _forgetRemovedPublished(_switchSect, _currentSubjectCode);
 
@@ -4406,6 +4575,7 @@ async function _onSubjectClick(code, name, units, hours) {
         const key = p.dataset.pillKey || '';
         p.classList.toggle('pill-subject-focus', key.startsWith(code + '_'));
     });
+    if (typeof _refreshSlicePills === 'function') _refreshSlicePills();
     const _earlyFocused = document.querySelector('.schedule-pill.pill-subject-focus');
     if (_earlyFocused) _earlyFocused.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
@@ -4683,6 +4853,7 @@ async function _focusSubjectPillInCalendar(code) {
             const key = p.dataset.pillKey || '';
             p.classList.toggle('pill-subject-focus', key.startsWith(code + '_'));
         });
+        if (typeof _refreshSlicePills === 'function') _refreshSlicePills();
         const focused = document.querySelector('.schedule-pill.pill-subject-focus');
         if (focused) focused.scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
@@ -4709,7 +4880,24 @@ async function _focusSubjectPillInCalendar(code) {
     applyHighlight();
 }
 
-async function _confirmSubjectSwitch(hasSlices, hasFaculty, details = []) {
+async function _confirmSubjectSwitch(hasSlices, hasFaculty, details = [], hasBoardRemoval = false) {
+    // A Published slice removed on the calendar only takes effect once it is approved —
+    // switching away restores it (its time is NOT free yet). Offer to approve it now.
+    if (hasBoardRemoval) {
+        let rmMsg = 'You removed a published slice of this subject on the calendar, but the removal is not '
+            + 'applied yet — its time is still taken until you Approve it.';
+        const _other = details.filter(d => !/published slice removed/i.test(d));
+        if (_other.length) rmMsg += '\n\nAlso not saved:\n' + _other.map(d => '• ' + d).join('\n');
+        rmMsg += '\n\nApprove removal: publishes this subject without that slice (stay here, then open the other subject).'
+            + '\nDiscard & switch: puts the slice back and opens the other subject.';
+        const choice = await showChoiceModal(rmMsg, 'Unsaved Changes', [
+            { value: 'cancel',  label: 'Cancel',            kind: 'cancel' },
+            { value: 'discard', label: 'Discard & switch',  kind: 'cancel' },
+            { value: 'approve', label: 'Approve removal',   kind: 'ok' },
+        ]);
+        if (choice === 'approve' && typeof approveSchedule === 'function') approveSchedule();
+        return choice === 'discard';
+    }
     let msg;
     if (hasSlices && hasFaculty) {
         msg = 'You have unsaved schedule changes and an unconfirmed faculty assignment for this subject.\nSwitch subject and discard them?';
@@ -5194,6 +5382,7 @@ async function _findFacultySliceConflict(facId, facName) {
     const mergeOk = typeof _isSubjectMergeEligible === 'function' && _isSubjectMergeEligible(code);
 
     const slices = Array.from(document.querySelectorAll('.ts-row')).map(row => ({
+        rowId: row.id.replace('ts-row-', ''),
         day:   row.querySelector('.ts-day-sel')?.value || '',
         start: _TS_TIMES.indexOf(row.querySelector('.ts-start-hidden')?.value || '') + 1,
         end:   _TS_TIMES.indexOf(row.querySelector('.ts-end-hidden')?.value   || '') + 1,
@@ -5201,10 +5390,16 @@ async function _findFacultySliceConflict(facId, facName) {
         ev:    row.dataset.mergeEvent || '',   // server event key (group model)
     })).filter(sl => sl.day && sl.start > 0 && sl.end > sl.start);
     // P7: the same subject with this faculty in another section, exactly at a slice's
-    // day/time/room, is a merge (confirmed on Save Draft / Publish), not a conflict.
-    const _mergeAt = (s, x) => typeof _mgMergeCandidate === 'function' && x.room && x.room !== 'TBA' &&
-        String(s.roomid) === String(x.room) && s.starttimeid === x.start && s.endtimeid === x.end &&
+    // day/time, is a merge (confirmed on Save Draft / Publish), not a conflict — in its
+    // room, or in any slice whose room isn't chosen yet (the merge then takes that room:
+    // see _mgFacultyMergeRooms). Picking the faculty before the room works the same as
+    // picking the room first.
+    const _noRoom = x => !x.room || x.room === 'TBA';
+    const _mergeAt = (s, x) => typeof _mgMergeCandidate === 'function' &&
+        s.roomid && (_noRoom(x) || String(s.roomid) === String(x.room)) &&
+        s.daydesc === x.day && s.starttimeid === x.start && s.endtimeid === x.end &&
         _mgMergeCandidate(s, { section: sect, subject: code, faculty: facId });
+    window._mgFacMergeRooms = {};
     if (!slices.length) return '';
 
     const fmt = idx => _TS_TIMES[idx - 1] || '';
@@ -5220,6 +5415,32 @@ async function _findFacultySliceConflict(facId, facName) {
         if (!Array.isArray(saved)) throw new Error('bad response');
     } catch (e) {
         return `Could not verify ${facName}'s schedule for conflicts. Please try again.`;
+    }
+    // A merge slot is offered only while the merged class has room for this section
+    // (Settings → Class Merging, e.g. NSTP 2–3). Same limit Save Draft / Publish apply.
+    if (saved.some(s => slices.some(x => _mergeAt(s, x)))) {
+        const limit = await _mgSectionLimit(code);
+        for (const x of slices) {
+            const m = saved.find(s => _mergeAt(s, x));
+            if (!m) continue;
+            const secs = new Set([String(sect)]);
+            const same = (sub, day, st, en, room) => String(sub || '').toUpperCase() === code &&
+                day === x.day && st === m.starttimeid && en === m.endtimeid && String(room) === String(m.roomid);
+            saved.forEach(s => { if (same(s.subjectcode, s.daydesc, s.starttimeid, s.endtimeid, s.roomid))
+                secs.add(String(s.section_id ?? s.sectionid ?? s.sectionname)); });
+            (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : []).forEach(c => {
+                if (c.isPreview || c.ay !== ay || c.sem !== sem) return;
+                if (same(c.subject_code, c.day, getTimeSlotIndex(c.start_time), getTimeSlotIndex(c.end_time), c.room_id))
+                    secs.add(String(c.section_id ?? c.section_name));
+            });
+            if (limit && secs.size > limit) {
+                return `Merge limit reached\n\n${facName} already teaches ${code} on ${x.day} ` +
+                    `${fmt(m.starttimeid)} – ${fmt(m.endtimeid)} (${m.roomname || 'room'}) for ${secs.size - 1} section(s). ` +
+                    `${code} can merge at most ${limit} sections (Settings → Class Merging), so this section ` +
+                    `cannot join that class. Choose another time or faculty.`;
+            }
+            if (_noRoom(x)) window._mgFacMergeRooms[x.rowId] = { room: String(m.roomid), name: m.roomname || '' };
+        }
     }
     for (const s of saved) {
         const sCode = String(s.subjectcode || '').toUpperCase();
@@ -5259,6 +5480,55 @@ async function _findFacultySliceConflict(facId, facName) {
         }
     }
     return '';
+}
+
+// Settings → Class Merging limit for a subject (null = no rule), cached per subject.
+const _mgLimitCache = {};
+async function _mgSectionLimit(code) {
+    code = String(code || '').toUpperCase();
+    if (!(code in _mgLimitCache)) {
+        _mgLimitCache[code] = fetch(`/api/manual/merge_limit?subject=${encodeURIComponent(code)}`)
+            .then(r => r.json()).then(d => (d && d.success ? d.limit : null))
+            .catch(() => { delete _mgLimitCache[code]; return null; });
+    }
+    return _mgLimitCache[code];
+}
+
+// A slice with no room yet that sits exactly on the faculty's same class of another section
+// (found by _findFacultySliceConflict) joins that merged class — which meets in ONE room —
+// so it takes that room. Without this the faculty-first order left the room open, and
+// choosing any other room later turned the merge into a faculty conflict.
+function _mgFacultyMergeRooms() {
+    const todo = window._mgFacMergeRooms || {};
+    window._mgFacMergeRooms = {};
+    const filled = [];
+    Object.entries(todo).forEach(([rowId, m]) => {
+        const row = document.getElementById(`ts-row-${rowId}`);
+        const cur = row?.querySelector('.ts-room-hidden')?.value || '';
+        if (!row || (cur && cur !== 'TBA') || !m.room) return;
+        tsSel('tsr', +rowId, m.room);
+        if ((row.querySelector('.ts-room-hidden')?.value || '') === m.room) filled.push(m.name || 'the same room');
+    });
+    if (filled.length && typeof showValidationModal === 'function') {
+        showValidationModal('Merged Class',
+            `This faculty already teaches this subject for another section at the same day and time, ` +
+            `so this slice joins that class in ${[...new Set(filled)].join(', ')}. ` +
+            `Save Draft / Publish will ask you to confirm the merge.`);
+    }
+}
+
+// Faculty chosen first, then the Day / End time: once the slice lands exactly on that
+// faculty's merge slot, give it the merged class's room (same rule as above).
+async function _mgFacultyMergeRoomFor(rowId) {
+    const facId = document.getElementById('sel_faculty')?.value || '';
+    const row = document.getElementById(`ts-row-${rowId}`);
+    const room = row?.querySelector('.ts-room-hidden')?.value || '';
+    if (!facId || facId === 'TBA' || !row || (room && room !== 'TBA')) return;
+    const msg = await _findFacultySliceConflict(facId, document.getElementById('fac_display_name')?.value || '');
+    if (msg) { window._mgFacMergeRooms = {}; return; }   // the slot check on save reports it
+    const mine = (window._mgFacMergeRooms || {})[String(rowId)];
+    window._mgFacMergeRooms = mine ? { [String(rowId)]: mine } : {};
+    _mgFacultyMergeRooms();
 }
 
 // Shows the conflict and drops the faculty pick, so nothing is persisted.
@@ -7619,6 +7889,7 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
                     p.classList.toggle('pill-subject-focus', key.startsWith(_currentSubjectCode + '_'));
                 });
                 // Scroll the calendar to the first focused pill so it's always visible
+                if (typeof _refreshSlicePills === 'function') _refreshSlicePills();
                 const _firstFocused = document.querySelector('.schedule-pill.pill-subject-focus');
                 if (_firstFocused) {
                     _firstFocused.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -8132,7 +8403,16 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
 
     // --- FIX: Bypass blocking kung may na-delete na subject ---
     if (!contextDrafts.length && window._deletedSubjectCodes.size === 0 && !_removedCodes.length) {
-        await showValidationModal('Nothing to Save', 'No sessions to save for the selected term.');
+        // Say WHY: an open, already-saved subject with nothing changed is not the same
+        // as having no schedule at all.
+        const _saved = pendingManualSchedule.filter(c => c.ay === ay && c.sem === sem && !c.isPreview && c.fromExisting
+            && (!_savingSubj || String(c.subject_code || '').toUpperCase() === String(_savingSubj).toUpperCase()));
+        const _st = _saved.some(c => (c.status || '').toLowerCase() === 'published') ? 'published' : 'saved';
+        const _msg = _saved.length
+            ? `No changes to save — ${_savingSubj || 'this subject'} is already ${_st} and nothing was changed. ` +
+              'Edit a time slice (day, time or room), add one or remove one first.'
+            : 'There is nothing to save yet — add a time slice for the subject first.';
+        await showValidationModal('Nothing to Save', _msg);
         return;
     }
 
@@ -8490,6 +8770,22 @@ async function confirmAllSlots(opts = {}) {
     if (!candidates.length && window._deletedSubjectCodes.size === 0 && !_hasBoardRemovals) {
         await showValidationModal('Nothing to Save',
             'Click on a time slice to select it, or edit a slice\'s fields before saving.');
+        return;
+    }
+
+    // Only selected, nothing changed (no edited slice, no new filled-in slice, nothing
+    // removed): there is nothing to save — say so plainly instead of continuing.
+    const _anyChange = allRowData.some(r => r.isDirty || (!r.hasExisting && r.day && r.start && r.end))
+        || window._deletedSubjectCodes.size > 0 || _hasBoardRemovals;
+    if (!_anyChange && !auto) {
+        const _code = document.getElementById('sel_subj')?.value || 'This subject';
+        const _ay = document.getElementById('sel_ay')?.value, _sem = document.getElementById('sel_sem')?.value;
+        const _isPub = pendingManualSchedule.some(c => c.fromExisting && c.ay === _ay && c.sem === _sem
+            && String(c.subject_code || '').toUpperCase() === String(_code).toUpperCase()
+            && (c.status || '').toLowerCase() === 'published');
+        await showValidationModal('Nothing to Save',
+            `No changes to save — ${_code} is already ${_isPub ? 'published' : 'saved'} and nothing was changed. ` +
+            'Edit a time slice (day, time or room), add one or remove one first.');
         return;
     }
 
@@ -9883,6 +10179,23 @@ function _applyRoomAvailabilityFilter(rowId) {
         const ranges = [...dbRanges, ...(localByRoom[rid] || [])]
             .filter(r => !(typeof _mgSameEvent === 'function' && _mgSameEvent(r, row.dataset.mergeEvent || '', _mgSect)))
             .map(r => (typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(r)) ? Object.assign({}, r, { merge: true }) : r);
+        // Shared room: unavailable only where it already holds its limit of sections.
+        const _sharedLim = (window.SHARED_ROOM_LIMITS || {})[String(rid)];
+        if (_sharedLim) {
+            const groups = _sharedRoomRanges(ranges.map((r, i) => ({
+                startIdx: r.startIdx, endIdx: r.endIdx, tag: _sharedFlexTag(r.subjectcode || r.subject_code),
+                sec: String(r.section_id ?? r.sectionname ?? r.versionid ?? ('i' + i)) })), _sharedLim,
+                _sharedFlexTag(_currentSubjectCode || document.getElementById('sel_subj')?.value || ''));
+            const blocked = groups.filter(g => (startIdx < g.endIdx && endIdx > g.startIdx) && !g.flex
+                && !(g.merge && startIdx === g.startIdx && endIdx === g.endIdx));
+            if (blocked.length) {
+                item.classList.add('room-unavailable');
+                item.title = blocked.some(g => !g.merge)
+                    ? 'Shared room is full at this time.'
+                    : 'Shared room: classes can share it only at exactly the same time (merge-set subjects like NSTP may overlap).';
+            }
+            return;
+        }
         const blocks = r => typeof _mgRangeBlocks === 'function'
             ? _mgRangeBlocks(r, startIdx, endIdx) : (startIdx < r.endIdx && endIdx > r.startIdx);
         const blocking = ranges.filter(blocks);
@@ -9916,6 +10229,7 @@ function _applyRoomAvailabilityFilter(rowId) {
 
 function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionId, mergeEvent) {
     const ranges = [];
+    const _tagOf = c => (typeof _sharedFlexTag === 'function' ? _sharedFlexTag(c) : null);
     if (!roomId || !day) return ranges;
     if (roomId === 'TBA') return ranges; // TBA sessions don't occupy a real room
 
@@ -9949,7 +10263,8 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
         // P7: same subject + same faculty (or TBA) in another section — offered as a merge
         // at exactly its slot (see _mgRangeBlocks).
         const _merge = typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(s);
-        ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx, merge: _merge });
+        ranges.push({ startIdx: s.startIdx, endIdx: s.endIdx, merge: _merge, tag: _tagOf(s.subjectcode),
+                      sec: 'd' + (s.section_id ?? s.sectionname ?? s.versionid ?? Math.random()) });
     });
 
     // From local pending schedule — skip merge-eligible entries too
@@ -9969,10 +10284,102 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
         const si = _TS_TIMES.indexOf(c.start_time);
         const ei = _TS_TIMES.indexOf(c.end_time);
         const _merge = typeof _mgMergeCandidate === 'function' && _mgMergeCandidate(c);
-        if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei, merge: _merge });
+        if (si >= 0 && ei > si) ranges.push({ startIdx: si, endIdx: ei, merge: _merge, tag: _tagOf(c.subject_code),
+                                              sec: 'p' + (c.section_id ?? c.temp_id) });
     });
 
+    // Shared room: classes may share it only at exactly the same time, up to its limit.
+    const _sharedLim = (window.SHARED_ROOM_LIMITS || {})[String(roomId)];
+    if (_sharedLim) return _sharedRoomRanges(ranges, _sharedLim, _tagOf(curSubj));
     return ranges;
+}
+
+/* Shared room check for placing a slice (confirmAndPlace): null when the room isn't a
+   shared room; else { ok, count, limit, sections } — count = distinct sections in the room
+   at any moment of [startId, endId) INCLUDING this one. Saved sessions come from
+   /api/get_room_schedule (other sections' Published/Draft classes), unsaved ones from the
+   editor; the slice being edited and this section's own other rows are not counted twice. */
+async function _sharedRoomPlaceCheck(roomId, day, startId, endId, ay, sem) {
+    const limit = (window.SHARED_ROOM_LIMITS || {})[String(roomId)];
+    if (!limit) return null;
+    const curSect = String(document.getElementById('sel_section')?.value || '');
+    const edit = window.currentEditSession || null;
+    const items = [];
+    try {
+        const r = await fetch(`/api/get_room_schedule/${encodeURIComponent(roomId)}?ay_id=${encodeURIComponent(ay)}` +
+            `&semester=${encodeURIComponent(sem)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
+        const rows = await r.json();
+        (Array.isArray(rows) ? rows : []).forEach(x => {
+            if (x.daydesc !== day) return;
+            if (edit && x.subjectcode === edit.subjectcode && x.daydesc === edit.daydesc &&
+                x.starttimeid === edit.starttimeid) return;
+            if (typeof _isDbRowHidden === 'function' && _isDbRowHidden(x)) return;
+            items.push({ s: x.starttimeid, e: x.endtimeid,
+                         key: String(x.section_id ?? x.sectionname ?? x.versionid),
+                         label: x.sectionname || (x.programcode ? `${x.programcode}-${x.year_level || ''}` : ''),
+                         code: x.subjectcode });
+        });
+    } catch (e) { /* counted from the editor's own rows only */ }
+    (typeof pendingManualSchedule !== 'undefined' ? pendingManualSchedule : []).forEach(c => {
+        if (String(c.room_id) !== String(roomId) || c.day !== day || c.ay !== ay || c.sem !== sem) return;
+        if (c.isPreview) return;
+        if (edit && (c.temp_id === edit.temp_id || c.temp_id === edit._localTempId)) return;
+        const cs = getTimeSlotIndex(c.start_time), ce = getTimeSlotIndex(c.end_time);
+        if (!cs || ce <= cs) return;
+        items.push({ s: cs, e: ce, key: String(c.section_id ?? c.temp_id),
+                     label: c.section_name || c.course || '', code: c.subject_code });
+    });
+    // This section's own rows are this class, not another one sharing the room.
+    const others = items.filter(it => !(curSect && it.key === curSect));
+    // A class at a different time that overlaps: classes may share only the exact same time —
+    // except classes of the same Class Merging rule as this subject (e.g. two NSTP classes).
+    const myTag = _sharedFlexTag(_currentSubjectCode || document.getElementById('sel_subj')?.value || '');
+    const partial = others.find(it => it.s < endId && it.e > startId && !(it.s === startId && it.e === endId)
+                                      && !(myTag && _sharedFlexTag(it.code) === myTag));
+    if (partial) {
+        return { ok: false, reason: 'partial', limit, other: partial,
+                 sections: partial.label ? [partial.label] : [], count: null };
+    }
+    // Most sections in the room at any moment of this class, this one included.
+    const inside = others.filter(it => it.s < endId && it.e > startId);
+    let count = 1, at = [];
+    [startId, ...inside.map(it => it.s).filter(t => t > startId && t < endId)].forEach(t => {
+        const here = inside.filter(it => it.s <= t && it.e > t);
+        const n = new Set(here.map(it => it.key)).size + 1;
+        if (n > count) { count = n; at = here; }
+    });
+    return { ok: count <= limit, reason: count <= limit ? null : 'full', limit, count,
+             sections: [...new Set(at.map(it => it.label).filter(Boolean))] };
+}
+
+/* A shared room's day as one range per EXACT class time. A time that already holds its
+   limit of sections blocks like any class; a time with seats left is `merge: true` — the
+   editor's exact-slot rule (_mgRangeBlocks): a new slice may use the room only at exactly
+   that start and end. ranges: [{startIdx, endIdx, sec}] in half-hour slot indexes. */
+function _sharedRoomRanges(ranges, limit, myTag) {
+    const groups = new Map();
+    ranges.forEach(r => {
+        const k = r.startIdx + '-' + r.endIdx;
+        if (!groups.has(k)) groups.set(k, { startIdx: r.startIdx, endIdx: r.endIdx, secs: new Set(), tags: new Set() });
+        groups.get(k).secs.add(r.sec);
+        groups.get(k).tags.add(r.tag || null);
+    });
+    // `flex`: classes of the same Class Merging rule as this subject (e.g. NSTP) — they
+    // may partly overlap it (_mgRangeBlocks lets them through); the room's limit still
+    // applies through the full spans below.
+    const out = [...groups.values()].map(g => ({
+        startIdx: g.startIdx, endIdx: g.endIdx,
+        merge: g.secs.size < limit, flex: !!myTag && g.tags.size === 1 && g.tags.has(myTag),
+        sharedRoom: true, sections: g.secs.size, limit }));
+    // Moments the room already holds its limit of sections block any new class.
+    const pts = [...new Set(ranges.flatMap(r => [r.startIdx, r.endIdx]))].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i];
+        const n = new Set(ranges.filter(r => r.startIdx <= a && r.endIdx > a).map(r => r.sec)).size;
+        if (n >= limit) out.push({ startIdx: a, endIdx: pts[i + 1], merge: false, flex: false,
+                                   sharedRoom: true, sharedFull: true, sections: n, limit });
+    }
+    return out;
 }
 
 function _applyRoomOccupancyFilter(sliceId) {
@@ -10022,7 +10429,7 @@ function _applyRoomOccupancyFilter(sliceId) {
 
     startList.querySelectorAll('.ts-ss-item').forEach(item => {
         const tIdx = _TS_TIMES.indexOf(item.dataset.val);
-        if (ranges.some(r => tIdx >= r.startIdx && tIdx < r.endIdx && !(r.merge && tIdx === r.startIdx)))
+        if (ranges.some(r => !r.flex && tIdx >= r.startIdx && tIdx < r.endIdx && !(r.merge && tIdx === r.startIdx)))
             item.classList.add('dim', 'occ-dim');
     });
 
@@ -11165,15 +11572,17 @@ async function selectFlFaculty(empNum, name) {
 
         const noRegMsg = isPartTime ? 'No TS sessions' : 'No sessions found';
 
-        reg.innerHTML = groupedReg.length
-            ? groupedReg.map(s=>`<tr>${cols(s)}</tr>`).join('')
+        // Part-time faculty: this table is titled TS — list their TS (overflow) classes.
+        const _regRows = isPartTime ? (tsSessions || []) : groupedReg;
+        reg.innerHTML = _regRows.length
+            ? _regRows.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : `<tr><td colspan="7" class="fl-no-data">${noRegMsg}</td></tr>`;
         pt.innerHTML  = groupedPt.length
             ? groupedPt.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : '<tr><td colspan="7" class="fl-no-data">—</td></tr>';
         const regPfx  = (document.getElementById('fl-reg-total-label')?.dataset.prefix) || 'TOTAL REGULAR LOAD: ';
         const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
-        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} hrs</strong>`;
+        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${isPartTime ? tsUsed : regUsed} hrs</strong>`;
         document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} hrs</strong>`;
 
         if (!isPartTime) {
@@ -12917,6 +13326,21 @@ tsSel = function(p, id, val) { return _historyStep(_origTsSel, arguments, this);
 
 const _origOnTsDayChange = onTsDayChange;
 onTsDayChange = function(id) { return _historyStep(_origOnTsDayChange, arguments, this); };
+
+// Faculty chosen first, then the Day / End time: a slice landing exactly on that faculty's
+// same class of another section (a merge) takes that class's room (_mgFacultyMergeRoomFor).
+const _origTsSelMg = tsSel;
+tsSel = function(p, id, val) {
+    const r = _origTsSelMg.apply(this, arguments);
+    if (p === 'tset' && !window._mgApplying) _mgFacultyMergeRoomFor(id).catch(() => {});
+    return r;
+};
+const _origOnTsDayChangeMg = onTsDayChange;
+onTsDayChange = function(id) {
+    const r = _origOnTsDayChangeMg.apply(this, arguments);
+    _mgFacultyMergeRoomFor(id).catch(() => {});
+    return r;
+};
 
 // A recommendation sets Day — or Start and End — in one click: one undo step.
 const _origChooseRecommendedDay = _chooseRecommendedDay;

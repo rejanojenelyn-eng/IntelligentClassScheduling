@@ -2646,6 +2646,27 @@ def detect_merges(cur, cfg, sem_id, section_id, rows, *, policy=None):
     def _fname(emp):
         return (faculty.get(emp) or {}).get('fullname') or emp or 'TBA'
 
+    # Moving a merged slice makes it a separate class again: a member whose submitted
+    # classes of that subject are ALL off its merged class's meetings has left that class.
+    # Its old membership then no longer decides (or blocks) a new merge, and confirming
+    # the new merge removes it from the old class (apply_merges → _leave_group).
+    def _on_meeting(g, day, st, et, room):
+        return any(m.get('daydesc') == day and hhmm(m.get('start')) == st and hhmm(m.get('end')) == et
+                   and norm_room(m.get('roomid')) == room for m in g.get('meetings') or ())
+    my_slots = defaultdict(list)
+    for r in rows or ():
+        csid = _section_subject(me, subjects, norm_code(r.get('subject_code') or r.get('subjectcode')))
+        st, et = clock(r.get('start_time')), clock(r.get('end_time'))
+        if csid is None or not st or not et:
+            continue
+        room = norm_room(r.get('room_id') if r.get('room_id') is not None else r.get('roomid'))
+        my_slots[csid] += [(d, st, et, room) for d in _occ_days(r)]
+    leaving = {}                             # my curriculum subject -> merged class it moved off
+    for csid, slots in my_slots.items():
+        g = groups.get(members.get((sid, csid)))
+        if g and g.get('meetings') and slots and not any(_on_meeting(g, *s) for s in slots):
+            leaving[csid] = g['mergegroupid']
+
     seen = set()
     limits, planned = {}, defaultdict(set)   # Settings' max sections per subject; sections per slot
     for r in rows or ():
@@ -2681,6 +2702,9 @@ def detect_merges(cur, cfg, sem_id, section_id, rows, *, policy=None):
                 if policy is not None and policy.same_event(mine_occ, o, day=d):
                     continue          # already this merged class
                 ga, gb = members.get((sid, my_csid)), members.get((osid, o_csid))
+                left = None
+                if ga is not None and leaving.get(my_csid) == ga and gb != ga:
+                    left, ga = ga, None          # moved off its old merged class: joins this one
                 g = groups.get(ga or gb)
                 info = {
                     'key': key, 'subject_code': code, 'subject_name': mine.get('subjectname'),
@@ -2694,6 +2718,8 @@ def detect_merges(cur, cfg, sem_id, section_id, rows, *, policy=None):
                     'starttimeid': _int(o.get('starttimeid')), 'endtimeid': _int(o.get('endtimeid')),
                     'class_type': _meeting_class_type(theirs, rooms.get(room)),
                     'group': (g or {}).get('groupname'),
+                    'leaves_group_id': left,
+                    'leaves_group': (groups.get(left) or {}).get('groupname') if left else None,
                 }
                 reason = None
                 if ga and gb and ga != gb:
@@ -2739,8 +2765,14 @@ def apply_merges(cur, cfg, sem_id, merges, *, username):
         return {'applied': []}
     _lock_semester(cur, sem_id)
     sections, subjects = load_offered(cur, sem_id)
-    applied, touched = [], set()
+    applied, touched, left = [], set(), set()
     for m in merges:
+        # This section moved off its old merged class (detect_merges): leave it first.
+        lg = m.get('leaves_group_id')
+        if lg and (lg, m['section_id']) not in left:
+            left.add((lg, m['section_id']))
+            _leave_group(cur, sem_id, lg, m['section_id'], m['my_csid'], username=username)
+            touched.discard(lg)
         members = _active_member_map(cur, sem_id)
         a = (m['section_id'], m['my_csid'])
         b = (m['other_section_id'], m['other_csid'])
@@ -2801,10 +2833,44 @@ def apply_merges(cur, cfg, sem_id, merges, *, username):
     return {'applied': applied}
 
 
+def _leave_group(cur, sem_id, group_id, section_id, csid, *, username):
+    """`section_id` moved its class of the merged subject off `group_id`'s meetings and is
+    merging elsewhere: remove it from that merged class. A meeting only this section was
+    attending (no remaining member has a class there) goes too, and a merged class left
+    with fewer than 2 sections is deleted — the same end state as Settings → Unmerge."""
+    sid = _int(section_id)
+    cur.execute("SELECT mergegroupmeetingid, daydesc, starttimeid, endtimeid, roomid "
+                "FROM public.merge_group_meeting WHERE mergegroupid = %s", (group_id,))
+    meetings = cur.fetchall() or []
+    cur.execute("DELETE FROM public.merge_group_member WHERE mergegroupid = %s AND sectionid = %s "
+                "AND curriculumsubjectid = %s", (group_id, sid, csid))
+    cur.execute("SELECT sectionid FROM public.merge_group_member WHERE mergegroupid = %s AND is_active",
+                (group_id,))
+    rest = {_int(r['sectionid']) for r in cur.fetchall() or []}
+    if len(rest) < 2:
+        cur.execute("DELETE FROM public.merge_group WHERE mergegroupid = %s", (group_id,))
+        return
+    # Current classes (the save being made is not written yet: this section's are its old ones).
+    at = defaultdict(set)
+    for o in fetch_occurrences(cur, [sem_id], None, draft_preferred=True):
+        if o.get('origin') == 'Local':
+            continue
+        at[(o['day'], _int(o.get('starttimeid')), _int(o.get('endtimeid')), norm_room(o.get('roomid')))] \
+            .add(_int(o['sectionid']))
+    for mt in meetings:
+        here = at.get((mt['daydesc'], _int(mt['starttimeid']), _int(mt['endtimeid']), norm_room(mt['roomid'])), set())
+        if sid in here and not (here & rest):
+            cur.execute("DELETE FROM public.merge_group_meeting WHERE mergegroupmeetingid = %s",
+                        (mt['mergegroupmeetingid'],))
+    cur.execute("UPDATE public.merge_group SET updated_by = %s, updated_at = NOW() WHERE mergegroupid = %s",
+                (username, group_id))
+
+
 def merge_notice_text(merges):
     """One line per merge for the confirmation notice / activity log."""
     return [f"{m['subject_code']}: {m['section_label']} merges with {m['other_section_label']} — "
             f"{m['day']} {m['start_label']}–{m['end_label']}, {m['roomname']}, {m['faculty_name']}"
+            + (f" (leaves merged class '{m['leaves_group']}')" if m.get('leaves_group') else '')
             for m in merges or ()]
 
 

@@ -313,9 +313,22 @@
                         <input type="hidden" name="action" value="{{ 'edit_designation' if field == 'Designation' else 'edit_employment' }}">
                         <input type="hidden" name="field" value="{{ field }}">
                         <select name="value" class="ed-one" aria-label="{{ field }}" {{ 'required' if field != 'Designation' }}
-                                {% if field == 'Employment Type' %}onchange="syncTypeForm(this.form)"{% endif %}>
+                                {% if field == 'Employment Type' %}onchange="syncTypeForm(this.form)"{% endif %}
+                                {% if field == 'Specialization' %}onchange="syncSpecOther(this.form)"{% endif %}>
                             {% for o in options %}<option value="{{ o }}" {{ 'selected' if o == info[field] }}>{{ o or 'No Designation' }}</option>{% endfor %}
+                            {% if field == 'Specialization' %}<option value="__other__">Others (not in the list)</option>{% endif %}
                         </select>
+                        {% if field == 'Specialization' %}
+                        {# Others: the faculty types it; it is added to the list of specializations
+                           when Account Setup is finished (one already in the list is reused). #}
+                        <div class="spec-other" hidden>
+                            <label class="ed-sub" for="specOther">Type your specialization</label>
+                            <input type="text" name="other_value" id="specOther" class="ed-one" maxlength="100"
+                                   placeholder="e.g. Data Science" disabled autocomplete="off">
+                            <p class="ed-hint"><i class="fas fa-circle-info"></i> It will be added to the list of
+                                specializations when you finish Account Setup.</p>
+                        </div>
+                        {% endif %}
                         {% if field == 'Employment Type' %}
                         {# Designee: the Designation is chosen in the same save (optional, as in Add Faculty).
                            Any other type: the Designation is removed when saving. #}
@@ -378,11 +391,22 @@
 
 
     // Inline Edit forms. Opening or cancelling one changes nothing; Save stores that field right away.
+    // Specialization "Others (not in the list)": show the box to type it in.
+    function syncSpecOther(form) {
+        const box = form.querySelector('.spec-other');
+        if (!box) return;
+        const other = form.querySelector('[name=value]').value === '__other__';
+        const input = box.querySelector('input');
+        box.hidden = !other; input.disabled = !other; input.required = other;
+        if (other) input.focus();
+    }
+
     function toggleEdit(id, open) {
         const form = document.getElementById(id);
         if (!form) return;
         if (!open) form.reset();
         if (form.querySelector('[name=designation]')) syncTypeForm(form);
+        if (form.querySelector('.spec-other')) syncSpecOther(form);
         form.classList.toggle('open', open);
         if (open) (form.querySelector('input:not([type=hidden]), select') || form).focus();
     }
