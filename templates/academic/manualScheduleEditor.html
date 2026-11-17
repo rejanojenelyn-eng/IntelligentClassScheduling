@@ -11572,15 +11572,17 @@ async function selectFlFaculty(empNum, name) {
 
         const noRegMsg = isPartTime ? 'No TS sessions' : 'No sessions found';
 
-        reg.innerHTML = groupedReg.length
-            ? groupedReg.map(s=>`<tr>${cols(s)}</tr>`).join('')
+        // Part-time faculty: this table is titled TS — list their TS (overflow) classes.
+        const _regRows = isPartTime ? (tsSessions || []) : groupedReg;
+        reg.innerHTML = _regRows.length
+            ? _regRows.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : `<tr><td colspan="7" class="fl-no-data">${noRegMsg}</td></tr>`;
         pt.innerHTML  = groupedPt.length
             ? groupedPt.map(s=>`<tr>${cols(s)}</tr>`).join('')
             : '<tr><td colspan="7" class="fl-no-data">—</td></tr>';
         const regPfx  = (document.getElementById('fl-reg-total-label')?.dataset.prefix) || 'TOTAL REGULAR LOAD: ';
         const ptPfx   = (document.getElementById('fl-pt-total-label')?.dataset.prefix)  || 'TOTAL PART-TIME LOAD: ';
-        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${regUsed} hrs</strong>`;
+        document.getElementById('fl-reg-total-label').innerHTML  = `${regPfx}<strong>${isPartTime ? tsUsed : regUsed} hrs</strong>`;
         document.getElementById('fl-pt-total-label').innerHTML   = `${ptPfx}<strong>${ptUsed} hrs</strong>`;
 
         if (!isPartTime) {

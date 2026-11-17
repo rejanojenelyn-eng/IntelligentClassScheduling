@@ -3935,7 +3935,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!el) return;
         el.min = today;
         // A typed date bypasses the picker's min: clear it instead of keeping a past date.
-        el.addEventListener('change', () => { if (el.value && el.value < el.min) el.value = ''; }, true);
+        // While the year is still being typed (2 → 0002, 20 → 0020 …) it is not a real
+        // date yet — clearing it then wiped the field on the first digit. Check once the
+        // year is complete, and again when leaving the field.
+        const _past = partial => el.value && el.value < el.min && (partial || parseInt(el.value, 10) >= 1000);
+        el.addEventListener('change', () => { if (_past(false)) el.value = ''; }, true);
+        el.addEventListener('blur', () => { if (_past(true)) { el.value = ''; el.dispatchEvent(new Event('change')); } });
     });
 });
 

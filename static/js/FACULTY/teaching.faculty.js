@@ -283,7 +283,7 @@ function renderWeeklyStats(filteredSessions) {
     if (allPrograms && load) {
         // All Programs: reuse the exact authoritative numbers the Teaching
         // Assignment tab shows for this same source, so the two tabs agree.
-        totalClasses  = load.regular.length + load.partTime.length;
+        totalClasses  = load.regular.length + load.partTime.length + (load.ts || []).length;
         teachingUnits = load.totals.totalUnits;
     } else {
         // A specific program is selected (or the load endpoint hasn't answered
@@ -522,6 +522,15 @@ function renderAssignment() {
         : `<tr><td colspan="7" style="text-align:center;color:#999;padding:16px;">${isLocal ? 'No Local Schedule.' : 'No part-time load assigned.'}</td></tr>`;
 
 
+    // Teaching Substitution (past the Regular / Part-time caps) — its own table when any.
+    const _ts = load.ts || [];
+    const _tsSec = document.getElementById('ts-load-section');
+    if (_tsSec) {
+        _tsSec.style.display = _ts.length ? '' : 'none';
+        document.getElementById('tbl-ts').innerHTML = _ts.map(makeRow).join('');
+        document.getElementById('total-ts-units').textContent = t.tsUnits || '—';
+    }
+
     document.getElementById('total-regular-units').textContent = t.regularUnits || '—';
     document.getElementById('total-pt-units').textContent      = t.partTimeUnits || '—';
     document.getElementById('total-overall-units').textContent = t.totalUnits || '—';
@@ -592,7 +601,7 @@ function openTaExportModal() {
     document.getElementById('taExpTitle').textContent = 'Teaching Assignment Export';
     document.getElementById('taExpHeaderIcon').className = 'fas fa-chalkboard-teacher';
     document.getElementById('taExpCountLabel').textContent = 'Assignments to Export';
-    const n = load.regular.length + load.partTime.length;
+    const n = load.regular.length + load.partTime.length + (load.ts || []).length;
     document.getElementById('taExpCount').textContent = n;
     document.getElementById('taExpScopeLabel').textContent =
         `${_scheduleMode === 'local' ? 'Local' : 'Official'} Schedule · ${load.sem_label}, AY ${load.ay_label}`;

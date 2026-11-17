@@ -307,7 +307,8 @@
         let paused = true;
         function syncButton() {
             if (!btn) return;
-            const typed = (userInput ? userInput.value : '').trim().toLowerCase();
+            // "Special font" digits (𝟭𝟮𝟭𝟯𝟰) are the same username to the server (NFKC).
+            const typed = (userInput ? userInput.value : '').normalize('NFKC').trim().toLowerCase();
             const off = paused && (!lockedUser || typed === lockedUser);
             btn.disabled = off;
             btn.innerHTML = off ? '<i class="fas fa-lock"></i>LOGIN' : 'LOGIN';

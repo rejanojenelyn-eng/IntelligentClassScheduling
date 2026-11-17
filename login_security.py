@@ -21,6 +21,8 @@ username box -- possibly a password -- is stored in plain text). Only a real acc
 with an email on file receives the alert email.
 """
 import hashlib
+import re
+import unicodedata
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -69,6 +71,16 @@ ENSURE_SCHEMA_SQL = [
 ]
 
 
+_INVISIBLE = re.compile('[​-‏⁠﻿­]')
+
+
+def plain_text(s):
+    """What the person meant to type: credentials copied from chats often come in
+    "fancy" Unicode — 𝟭𝟮𝟭𝟯𝟰 (math bold digits), full-width １２３, 𝐩𝐚𝐬𝐬 — or with invisible
+    zero-width characters. NFKC turns those into plain 12134 / 123 / pass."""
+    return _INVISIBLE.sub('', unicodedata.normalize('NFKC', s or '')).strip()
+
+
 def username_key(username):
     return hashlib.sha256((username or '').strip().lower().encode('utf-8')).hexdigest()
 
@@ -78,7 +90,14 @@ def password_matches(user, password):
     if not user:
         check_password_hash(_DUMMY_HASH, password or '')
         return False
-    return check_password_hash(str(user.get('passwordhash') or '').strip(), password or '')
+    stored = str(user.get('passwordhash') or '').strip()
+    if check_password_hash(stored, password or ''):
+        return True
+    # Typed / pasted in a "special font" (see plain_text): also try the plain characters.
+    # Still one attempt for the lockout count; a password really set with such characters
+    # keeps matching above.
+    plain = plain_text(password)
+    return plain != (password or '') and check_password_hash(stored, plain)
 
 
 def _purge(cur):

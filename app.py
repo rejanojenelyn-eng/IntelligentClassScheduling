@@ -2516,7 +2516,10 @@ def logout():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = str(request.form.get('username')).strip()
+        # Employee IDs copied from chats may come in a "special font" (𝟭𝟮𝟭𝟯𝟰) — read the
+        # plain characters. The password is matched as typed and, failing that, as plain
+        # characters too (login_security.password_matches).
+        username = _loginsec.plain_text(str(request.form.get('username') or ''))
         password = str(request.form.get('password')).strip()
         session['saved_username'] = username
 
@@ -2585,7 +2588,7 @@ def login():
 
         must_change = bool(user_data.get('must_change_password'))
         setup_done  = bool(user_data.get('account_setup_complete', True))
-        if not must_change and password in (f"PUP@{username}", username, 'password123'):
+        if not must_change and _loginsec.plain_text(password) in (f"PUP@{username}", username, 'password123'):
             must_change = True
         # An account that has never set its own password (no password_changed_at) has
         # never been through Account Setup, even when it is marked complete (accounts
@@ -3526,6 +3529,22 @@ def _apply_employment_changes(cur, emp, fac):
             continue
         cur.execute(sql, (fac[field],))
         row = cur.fetchone()
+        if not row and field == 'Specialization':
+            # Typed under "Others" in Account Setup: add it to the list of specializations
+            # (same insert as Admin's import), then use it.
+            cur.execute("SELECT specializationid AS id, isactive FROM specialization "
+                        "WHERE LOWER(specializationname) = LOWER(%s)", (fac[field],))
+            row = cur.fetchone()
+            if row and not row['isactive']:
+                raise _SetupProblem(f"The Specialization '{fac[field]}' is no longer offered. Please choose another one.")
+            if not row:
+                cur.execute("INSERT INTO specialization (specializationname, isactive) VALUES (%s, TRUE) "
+                            "ON CONFLICT (specializationname) DO NOTHING RETURNING specializationid AS id", (fac[field],))
+                row = cur.fetchone()
+                if not row:          # added by someone else at the same moment
+                    cur.execute("SELECT specializationid AS id FROM specialization WHERE specializationname = %s",
+                                (fac[field],))
+                    row = cur.fetchone()
         if not row:
             raise _SetupProblem(f"The {field} '{fac[field]}' no longer exists. Please choose another one.")
         cols[column] = row['id']
@@ -3630,6 +3649,29 @@ def _setup_commit(username, draft, has_faculty):
                        category='account', color=_LOG_COLORS['account'])
     return None
 
+_SPEC_OTHER = '__other__'          # Specialization "Others (not in the list)" option
+
+
+def _typed_specialization(raw):
+    """A specialization the faculty typed under "Others" during Account Setup. Returns
+    (name, None) or (None, error). One already in the list (any letter case) is reused,
+    so the list never gets the same specialization twice; a new one is added to the list
+    when Account Setup is finished (_apply_employment_changes)."""
+    name = ' '.join(_loginsec.plain_text(raw).split())
+    if not name:
+        return None, "Please type your specialization."
+    if len(name) < 2 or len(name) > 100:
+        return None, "Your specialization must be 2 to 100 characters long."
+    if not re.search(r'[A-Za-z]', name) or not re.fullmatch(r"[A-Za-z0-9 .,&'()/\-]+", name):
+        return None, "Please type your specialization using letters (numbers and . , & ' ( ) / - are allowed)."
+    row = query_db("SELECT specializationname, isactive FROM specialization WHERE LOWER(specializationname) = LOWER(%s)",
+                   (name,), one=True)
+    if row and not row['isactive']:
+        return None, (f"\"{row['specializationname']}\" is no longer offered. Please choose another specialization, "
+                      "or ask the Administrator.")
+    return (row['specializationname'] if row else name), None
+
+
 def _setup_review_edit(action, saved, info, pending_fields, specializations, employment_types, designation_names,
                        employment_locked):
     """Validate one Review-step Edit. Returns (draft changes, None) or (None, error)."""
@@ -3665,6 +3707,11 @@ def _setup_review_edit(action, saved, info, pending_fields, specializations, emp
         return changes, None
     if action == 'edit_employment':
         field, value = form.get('field', ''), form.get('value', '').strip()
+        if field == 'Specialization' and value == _SPEC_OTHER and field not in pending_fields:
+            name, err = _typed_specialization(form.get('other_value', ''))
+            if err:
+                return None, err
+            return {field: name}, None
         options = {'Specialization':    [s['specializationname'] for s in specializations],
                    'Employment Type':   employment_types,
                    'Employment Status': list(_EMPLOYMENT_STATUSES)}
@@ -35766,6 +35813,8 @@ def api_faculty_my_teaching_load():
             'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
             'regular':  [_row(g) for g in buckets['groupedReg']],
             'partTime': [_row(g) for g in buckets['groupedPt']],
+            # Teaching Substitution: the classes past the Regular / Part-time caps.
+            'ts':       [_row(g) for g in buckets['tsSessions']],
             'totals': {
                 'regularUnits':   buckets['regUsed'],
                 'partTimeUnits':  buckets['ptUsed'],
@@ -35910,6 +35959,8 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
         'export_filename': _ta_export.export_filename(fac['fullname'], sem_label, ay_label),
         'regular':  [_row(g) for g in buckets['groupedReg']],
         'partTime': [_row(g) for g in buckets['groupedPt']],
+        # Teaching Substitution: the classes past the Regular / Part-time caps.
+        'ts':       [_row(g) for g in buckets['tsSessions']],
         'totals': {
             'regularUnits':   buckets['regUsed'],
             'partTimeUnits':  buckets['ptUsed'],
