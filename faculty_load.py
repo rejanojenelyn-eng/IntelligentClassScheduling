@@ -402,6 +402,20 @@ def is_reg_slice(days, time_code):
     return classify_slice(days, _time_code_end_hour(time_code), _time_code_start_hour(time_code)) == 'regular'
 
 
+CONTRACTUAL_STATUS = 'Contractual'
+
+
+def rule_status(employeestatus, typename):
+    """The employment status the scheduling rules apply (HC2/HC3 time windows, the AM
+    PT window, generation blocks). 'Contractual' (PUPLQ faculty masterlist) has no rule
+    set of its own: it follows the faculty's employee type — a Part-time type gets the
+    'Part-Time' rules, any other type the regular 'Temporary' rules. Every other status
+    is returned unchanged. Faculty records keep 'Contractual'; only rule maps use this."""
+    if (employeestatus or '').strip().lower() == CONTRACTUAL_STATUS.lower():
+        return 'Part-Time' if 'part' in (typename or '').lower() else 'Temporary'
+    return employeestatus
+
+
 def get_faculty_caps(faculty_row):
     """faculty_row needs: designationid, plus Regular/PT/TS caps and a type label under any
     of the several key-name conventions the existing call sites already use (regularload/

@@ -3106,7 +3106,7 @@ _SETUP_STEPS = [
 _PH_MOBILE_RE = re.compile(r'\+63\s*9\d{2}[\s-]?\d{3}[\s-]?\d{4}')
 
 _NAME_SUFFIXES       = ('', 'Jr.', 'Sr.', 'II', 'III', 'IV', 'V')
-_EMPLOYMENT_STATUSES = ('Permanent', 'Temporary', 'Part-Time')     # faculty.chk_employeestatus
+_EMPLOYMENT_STATUSES = ('Permanent', 'Temporary', 'Part-Time', 'Contractual')     # faculty.chk_employeestatus
 _DESIGNEE_TYPE       = 'Designee'
 
 # Account Setup saves nothing until Save and Confirm on the Review step. Until then
@@ -6880,6 +6880,8 @@ def bulk_import():
                     status = 'Permanent'
                 elif status_norm == 'temporary':
                     status = 'Temporary'
+                elif status_norm == 'contractual':
+                    status = 'Contractual'
 
                 cur.execute("""
                     INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
@@ -7004,6 +7006,7 @@ def _acad_insert_employees(rows, conn, cur):
         if sn == 'parttime': return 'Part-Time'
         if sn == 'permanent': return 'Permanent'
         if sn == 'temporary': return 'Temporary'
+        if sn == 'contractual': return 'Contractual'
         return s
 
     errors = []
@@ -26376,6 +26379,8 @@ def admin_bulk_import():
                     status = 'Permanent'
                 elif status_norm == 'temporary':
                     status = 'Temporary'
+                elif status_norm == 'contractual':
+                    status = 'Contractual'
 
                 cur.execute("""
                     INSERT INTO Faculty (EmployeeNumber, FirstName, MiddleName, LastName,
@@ -26484,6 +26489,7 @@ def _admin_insert_employees(rows, conn, cur):
         if sn == 'parttime': return 'Part-Time'
         if sn == 'permanent': return 'Permanent'
         if sn == 'temporary': return 'Temporary'
+        if sn == 'contractual': return 'Contractual'
         return s
 
     errors = []
@@ -38383,7 +38389,8 @@ def _load_faculty_map(force_refresh: bool = False):
         eff_regular, eff_parttime, eff_ts = faculty_load.get_faculty_caps(row)
         faculty_map[fnum] = {
             'employeenumber': fnum, 'fullname': row['fullname'],
-            'employeestatus': row['employeestatus'], 'designationid': row['designationid'],
+            'employeestatus': faculty_load.rule_status(row['employeestatus'], row.get('typename')),
+            'designationid': row['designationid'],
             'nightteachingservice': row['nightteachingservice'],
             'specializationname': row.get('specializationname') or '',
             'employeetype': {
@@ -39741,7 +39748,7 @@ def _build_faculty_map_for_csp(faculty_ids):
         return {}
     rows = query_db("""
         SELECT f.employeenumber, CONCAT(f.lastname, ', ', f.firstname) AS fullname,
-               f.employeestatus, f.designationid, et.regularload, et.parttimeload,
+               f.employeestatus, et.typename, f.designationid, et.regularload, et.parttimeload,
                et.teachingsubstitution, et.regular_start, et.regular_end,
                et.parttime_start, et.parttime_end,
                COALESCE(et.restrict_pt_hours, TRUE) AS restrict_pt_hours,
@@ -39759,7 +39766,8 @@ def _build_faculty_map_for_csp(faculty_ids):
         eff_regular, eff_parttime, eff_ts = faculty_load.get_faculty_caps(row)
         faculty_map[row['employeenumber']] = {
             'employeenumber': row['employeenumber'], 'fullname': row['fullname'],
-            'employeestatus': row['employeestatus'], 'designationid': row['designationid'],
+            'employeestatus': faculty_load.rule_status(row['employeestatus'], row.get('typename')),
+            'designationid': row['designationid'],
             'nightteachingservice': row['nightteachingservice'],
             'specializationname': row.get('specializationname') or '',
             'employeetype': {

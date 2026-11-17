@@ -1200,7 +1200,7 @@
             (opts.employee_types||[]).map(t => `<option value="${t.employeetypeid}">${t.typename}</option>`).join('');
         const desigOpts = '<option value="">Designation (optional)…</option>' +
             (opts.designations||[]).map(d => `<option value="${d.designationid}">${d.designationname}</option>`).join('');
-        const statusOpts = ['Temporary','Permanent','Part-Time'].map(s => `<option value="${s}">${s}</option>`).join('');
+        const statusOpts = ['Temporary','Permanent','Part-Time','Contractual'].map(s => `<option value="${s}">${s}</option>`).join('');
         const progOpts = '<option value="">Program…</option>' +
             (data.programs||[]).map(p => `<option value="${p.programcode}">${p.programcode}</option>`).join('');
         const ylOpts = '<option value="">Year…</option>' +
@@ -1312,7 +1312,7 @@
             const specOpts = '<option value="">Specialization…</option>' + (opts.specializations||[]).map(s => `<option value="${s.specializationid}">${s.specializationname}</option>`).join('');
             const typeOpts = '<option value="">Employee Type…</option>' + (opts.employee_types||[]).map(t => `<option value="${t.employeetypeid}">${t.typename}</option>`).join('');
             const desigOpts = '<option value="">Designation (optional)…</option>' + (opts.designations||[]).map(d => `<option value="${d.designationid}">${d.designationname}</option>`).join('');
-            const statusOpts = ['Temporary','Permanent','Part-Time'].map(s => `<option value="${s}">${s}</option>`).join('');
+            const statusOpts = ['Temporary','Permanent','Part-Time','Contractual'].map(s => `<option value="${s}">${s}</option>`).join('');
             formHolder.innerHTML = _histNewFacultyFormHtml(name, _histFacState[name], specOpts, typeOpts, desigOpts, statusOpts);
         }
         _refreshResSummaries();
@@ -1364,7 +1364,7 @@
                 const specOpts = '<option value="">Specialization…</option>' + (opts.specializations||[]).map(s => `<option value="${s.specializationid}">${s.specializationname}</option>`).join('');
                 const typeOpts = '<option value="">Employee Type…</option>' + (opts.employee_types||[]).map(t => `<option value="${t.employeetypeid}">${t.typename}</option>`).join('');
                 const desigOpts = '<option value="">Designation (optional)…</option>' + (opts.designations||[]).map(d => `<option value="${d.designationid}">${d.designationname}</option>`).join('');
-                const statusOpts = ['Temporary','Permanent','Part-Time'].map(s => `<option value="${s}">${s}</option>`).join('');
+                const statusOpts = ['Temporary','Permanent','Part-Time','Contractual'].map(s => `<option value="${s}">${s}</option>`).join('');
                 formHolder.innerHTML = _histNewFacultyFormHtml(name, _histFacState[name], specOpts, typeOpts, desigOpts, statusOpts);
             }
         } else if (val) {

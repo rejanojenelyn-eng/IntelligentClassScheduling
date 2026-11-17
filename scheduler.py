@@ -198,7 +198,8 @@ _SUBJ_SPEC_MAP = [
     ),
     (
         ['ARCH', 'ARCHS'],
-        {'Architecture, Design and the Built Environment', 'Architecture'},
+        {'Architecture, Design and the Built Environment', 'Architecture',
+         'Architecture and Built Environment'},   # PUPLQ faculty masterlist wording
     ),
     (
         ['CIEN', 'ENSC'],
@@ -2952,6 +2953,7 @@ class IntelligentScheduler:
             SELECT f.employeenumber,
                    CONCAT(f.lastname, ', ', f.firstname) AS fullname,
                    f.employeestatus,
+                   et.typename,
                    f.designationid,
                    et.regularload,
                    et.parttimeload,
@@ -2985,7 +2987,7 @@ class IntelligentScheduler:
             fac = {
                 'employeenumber':   fnum,
                 'fullname':         row['fullname'],
-                'employeestatus':   row['employeestatus'],
+                'employeestatus':   faculty_load.rule_status(row['employeestatus'], row.get('typename')),
                 'designationid':    row['designationid'],
                 'nightteachingservice': row['nightteachingservice'],
                 'specializationname':   row.get('specializationname') or '',

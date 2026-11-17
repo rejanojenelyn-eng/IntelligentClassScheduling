@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS public.faculty
         REFERENCES public.specialization (specializationid) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE NO ACTION,
-    CONSTRAINT chk_employeestatus CHECK (employeestatus::text = ANY (ARRAY['Temporary'::character varying::text, 'Permanent'::character varying::text, 'Part-Time'::character varying::text]))
+    CONSTRAINT chk_employeestatus CHECK (employeestatus::text = ANY (ARRAY['Temporary'::character varying::text, 'Permanent'::character varying::text, 'Part-Time'::character varying::text, 'Contractual'::character varying::text]))
 );
 -----------------------------------------------------------------------
 -- MERGED CLASS
