@@ -52,6 +52,7 @@ from pdf_faculty_parser import parse_faculty_pdf
 from docx_faculty_parser import parse_faculty_docx
 import faculty_load
 import merge_groups
+import bridging_reserve
 import threading
 
 _PERSON_NAME_RE = re.compile(r"^[A-ZÑ][A-ZÑ'\- ]+,\s+[A-ZÑ][A-Za-zñÑ'\-]+")   # "SURNAME, Given ..."
@@ -9130,9 +9131,26 @@ def get_offerings_schedule():
             if not r['start_time'] and r['subjectcode'] not in hist_subjects
         ]
         combined = norm_timed + hist_extra + norm_untimed_fallback
+        # Manual Editor Program View (include_bridging=1): a Regular section also shows its
+        # Bridging section's class times as read-only blocks — those times are kept free for
+        # the section's bridging students. Opt-in, so the Schedule page and every export
+        # keep listing only the section's own classes.
+        if (request.args.get('include_bridging') == '1' and section_id
+                and version_status == 'active' and not is_past_sem):
+            for b in bridging_reserve.reserved_sessions(section_id, sem, ay):
+                combined.append({
+                    'subjectcode': b['subjectcode'], 'subjectname': b['subjectname'],
+                    'instructor': b['instructor'], 'faculty_id': b['faculty_id'],
+                    'roomname': b['roomname'], 'daydesc': b['daydesc'],
+                    'start_time': b['start_tv'].strftime('%H:%M') if b['start_tv'] else None,
+                    'end_time': b['end_tv'].strftime('%H:%M') if b['end_tv'] else None,
+                    'status': b['bridging_status'], 'sectionname': b['bridging_section'],
+                    'section_id': b['bridging_section_id'],
+                    'bridging_reserved': True, 'bridging_section': b['bridging_section'],
+                })
         print(f"[DEBUG] combined={len(combined)} norm_timed={len(norm_timed)} hist_extra={len(hist_extra)} untimed_fb={len(norm_untimed_fallback)}")
         for c in combined[:3]:
-            print(f"  out: subj={c['subjectcode']!r} day={c['daydesc']!r} start={c['start_time']!r} hours={c['total_hours']!r}")
+            print(f"  out: subj={c['subjectcode']!r} day={c['daydesc']!r} start={c['start_time']!r} hours={c.get('total_hours')!r}")
         return jsonify(_attach_upcoming_changes(combined))
  
     except Exception as e:
@@ -24833,7 +24851,22 @@ def api_manual_section_schedule():
                       )
                   )
             """, (prog, yl, ay_id, sem) + tuple(extra_params)) or []
-            return jsonify([dict(r) for r in rows])
+            out = [dict(r) for r in rows]
+            # A Regular section must keep its Bridging section's class times free (some of
+            # its students take those subjects) — returned as section busy rows so every
+            # Manual Editor section-conflict check blocks them. Status 'Bridging' keeps
+            # them out of the client's Draft-replaces-Published filtering.
+            if section_value is not None:
+                for b in bridging_reserve.reserved_sessions(section_value, sem, ay_id):
+                    out.append({
+                        'subjectcode': b['subjectcode'], 'subjectname': b['subjectname'],
+                        'daydesc': b['daydesc'], 'starttimeid': b['starttimeid'],
+                        'endtimeid': b['endtimeid'], 'status': 'Bridging',
+                        'official_sessionid': None, 'schedule_source': 'BridgingReserve',
+                        'bridging_reserved': True, 'bridging_section': b['bridging_section'],
+                        'instructor': b['instructor'], 'roomname': b['roomname'],
+                    })
+            return jsonify(out)
 
         # PHASE 6.4-A — effective Local-mode Section Schedule.
         official_rows = query_db(f"""
@@ -43321,6 +43354,13 @@ def api_save_draft():
                     draft_warnings.append({'rule': 'HC12', 'subject': f"{a['code']} / {b['code']}",
                         'detail': f"Section conflict: {a['code']} and {b['code']} overlap on {a['day']}."})
 
+        # A Regular section's class on its Bridging section's time — a warning here,
+        # blocked at Approve (see _bridging_reserve_conflicts).
+        if (rehydrated and scheduler_mode != 'local'
+                and int(_draft_cfg.get('hc_section_conflict_enabled', 1) or 0)):
+            for w in _bridging_reserve_conflicts(rehydrated, ctx_section_id, term, ay):
+                draft_warnings.append({k: w[k] for k in ('rule', 'subject', 'detail')})
+
         if incoming:
             cur.execute("""
                 SELECT UPPER(cs2.subjectcode) AS subjectcode, ss.daydesc, ss.starttimeid, ss.endtimeid,
@@ -44069,6 +44109,47 @@ def _same_subject_slice_overlaps(rows, same_section=False):
     return violations
 
 
+def _bridging_reserve_conflicts(rows, section_id, term, ay):
+    """HC12 for a Regular section: a submitted class that overlaps one of its Bridging
+    section's classes (bridging_reserve.reserved_sessions — those times are kept free
+    for the section's bridging students). [] for a Bridging section or none."""
+    if not rows or not section_id:
+        return []
+    reserved = bridging_reserve.reserved_sessions(section_id, term, ay)
+    if not reserved:
+        return []
+
+    def _t(v):
+        return _parse_time_str(v) if isinstance(v, str) else v
+
+    out, seen = [], set()
+    for r in rows:
+        code = (r.get('subject_code') or r.get('subjectcode') or '').upper()
+        st, et = _t(r.get('start_time')), _t(r.get('end_time'))
+        if st is None or et is None:
+            continue
+        days = [d for d in (r.get('days_list') or [r.get('day') or r.get('daydesc')]) if d]
+        for d in days:
+            for b in reserved:
+                if b['daydesc'] != d or b['start_tv'] is None or b['end_tv'] is None:
+                    continue
+                if not (st < b['end_tv'] and et > b['start_tv']):
+                    continue
+                key = (code, d, b['subjectcode'], b['start_tv'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({
+                    'rule': 'HC12', 'type': 'Conflict: Section Schedule',
+                    'subject': f"{code} / {b['subjectcode']}",
+                    'detail': (f"{code} ({d} {_fmt_12h(st)}–{_fmt_12h(et)}) overlaps the bridging class "
+                               f"{bridging_reserve.label(b)} on {d} {_fmt_12h(b['start_tv'])}–"
+                               f"{_fmt_12h(b['end_tv'])}. That time is kept free for this section's "
+                               f"bridging students."),
+                })
+    return out
+
+
 def _publish_carried_forward_conflicts(submitted_rows, carried_rows, config=None):
     """HC10/HC11/HC12 conflicts BETWEEN the rows being published and the
     same section's carried-forward rows (its other subjects that go into the
@@ -44534,6 +44615,19 @@ def api_approve_schedule():
                               'of the classes, or save the Draft with its new slot first.'),
                     'violations': draft_conflicts,
                 }), 400
+
+            # ...and against the Bridging section's classes (kept free in every Regular
+            # section of the program/year — see bridging_reserve).
+            if int(_hc_cfg.get('hc_section_conflict_enabled', 1) or 0):
+                bridging_conflicts = _bridging_reserve_conflicts(sched_data, _ctx_section_id, term, ay)
+                if bridging_conflicts:
+                    conn.rollback(); cur.close(); conn.close()
+                    return jsonify({
+                        'success': False,
+                        'error': (f'Cannot approve: {len(bridging_conflicts)} class(es) overlap a '
+                                  'bridging class. Those times are kept free for the bridging students.'),
+                        'violations': bridging_conflicts,
+                    }), 400
 
         # HC15 cross-schedule validation. Reuse the SAME effective-schedule
         # validator used by generation instead of maintaining a publish-only

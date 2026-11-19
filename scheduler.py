@@ -2254,7 +2254,29 @@ class CSPValidator:
                     f'overlap. A section cannot have two classes at the same time.'
                 )
                 violations.append(v)
+        # A Regular section's Bridging-section classes (bridging_reserve): those times are
+        # already taken for its bridging students. Empty unless Schedule Generation set them.
+        for a in schedule:
+            a_days = set(a.get('days_list') or [a.get('day')])
+            for r in self.reserved_section_slots:
+                if r['day'] not in a_days or not self._times_overlap(
+                        a['start_time'], a['end_time'], r['start_time'], r['end_time']):
+                    continue
+                v = self._build_overlap_violation('HC12', a, {'subject_code': r['subject_code']},
+                                                  [r['day']], ('day', 'time'))
+                v['detail'] = (
+                    f'"{a.get("subject_code", "?")}" '
+                    f'({format_time_12h(a["start_time"])}–{format_time_12h(a["end_time"])}) overlaps the '
+                    f'bridging class "{r["subject_code"]}" of {r["section"]} on {r["day"]} '
+                    f'({format_time_12h(r["start_time"])}–{format_time_12h(r["end_time"])}). '
+                    f'That time is kept free for this section\'s bridging students.'
+                )
+                violations.append(v)
         return violations
+
+    # Bridging-section class times a Regular section must keep free:
+    # [{'day', 'start_time', 'end_time', 'subject_code', 'section'}] (see bridging_reserve).
+    reserved_section_slots = ()
 
     @staticmethod
     def _times_overlap(s1, e1, s2, e2):
@@ -4228,6 +4250,9 @@ class IntelligentScheduler:
         # HC8: night days designees already use in OTHER sections this term.
         for _fid, _days in night_days_from_slots(published_faculty_slots, faculty_map).items():
             _night_days[_fid] |= _days
+        # The Bridging section's class times (this Regular section keeps them free).
+        for _d, _slots in self._reserved_section_slots.items():
+            section_slots[_d].extend(_slots)
 
         def _has_overlap(fac_id, days, start, end, room_id):
             for d in days:
@@ -4915,6 +4940,8 @@ class IntelligentScheduler:
                 Checks both intra-individual slots and already-published/draft occupancies."""
                 fid = gene.get('faculty_id')
                 rid = gene.get('room_id')
+                if self._reserved_hit(new_days, new_s, new_e):
+                    return False
                 for d in new_days:
                     for (ix, ss, se) in section_day.get(d, []):
                         if ix != gene_idx and new_s < se and new_e > ss:
@@ -5050,6 +5077,11 @@ class IntelligentScheduler:
                     if s_b < e_a:
                         conflicted.add(idx_a)
                         conflicted.add(idx_b)
+            # ...and any class sitting on a Bridging-section class time.
+            for i, cls in enumerate(individual):
+                if self._reserved_hit(cls.get('days_list') or [cls.get('day')],
+                                      cls.get('start_time'), cls.get('end_time')):
+                    conflicted.add(i)
 
             for slots in fac_day.values():
                 slots.sort(key=lambda x: x[1])
@@ -5145,6 +5177,8 @@ class IntelligentScheduler:
             return True
 
         def _ind_sec_free(days, st, et, exclude_idx):
+            if self._reserved_hit(days, st, et):
+                return False
             for j, other in enumerate(individual):
                 if j == exclude_idx:
                     continue
@@ -5387,6 +5421,38 @@ class IntelligentScheduler:
                 incomplete.append((gene, missing))
         return incomplete
 
+    # Bridging-section class times the section being generated must keep free:
+    # {day: [(start, end)]}. Set per generate_draft run (see _load_bridging_reservations).
+    _reserved_section_slots = {}
+
+    def _reserved_hit(self, days, s, e):
+        """True when s–e on any of `days` overlaps a Bridging-section class this Regular
+        section keeps free (HC12)."""
+        if not self._reserved_section_slots or s is None or e is None:
+            return False
+        return any(s < re and e > rs
+                   for d in (days or []) for (rs, re) in self._reserved_section_slots.get(d, ()))
+
+    def _load_bridging_reservations(self, section_id, term, acad_year_id):
+        """(per-day dict for the builder/repairs, list for CSPValidator) of the Bridging
+        section's classes when `section_id` is a Regular section; empty otherwise."""
+        by_day, slots = defaultdict(list), []
+        if not section_id:
+            return {}, []
+        try:
+            import bridging_reserve
+            rows = bridging_reserve.reserved_sessions(section_id, term, acad_year_id)
+        except Exception as e:
+            logger.warning('bridging reservations not loaded: %s', e)
+            return {}, []
+        for r in rows:
+            if r.get('start_tv') is None or r.get('end_tv') is None:
+                continue
+            by_day[r['daydesc']].append((r['start_tv'], r['end_tv']))
+            slots.append({'day': r['daydesc'], 'start_time': r['start_tv'], 'end_time': r['end_tv'],
+                          'subject_code': r['subjectcode'], 'section': r['bridging_section']})
+        return dict(by_day), slots
+
     def _make_slot_free_check(self, individual, published_room_slots=None, published_faculty_slots=None):
         """free(fid, rid, days, s, e, exclude_gene): True when neither the faculty nor the
         room is busy at that time — in `individual` or in other sections' Published/Draft."""
@@ -5441,6 +5507,8 @@ class IntelligentScheduler:
         allowed = [(s, e, 'current')] + ([] if only_current else [b for b in allowed if (b[0], b[1]) != (s, e)])
 
         def _section_free(ds, bs, be):
+            if self._reserved_hit(ds, bs, be):
+                return False
             for other in individual:
                 if other is gene or other.get('start_time') is None:
                     continue
@@ -5535,7 +5603,8 @@ class IntelligentScheduler:
                     if gene.get('start_time') is not None:
                         break
                     for ds in day_sets:
-                        if _free(fid, rid, ds, s, e, gene):
+                        # Never on a Bridging-section class time this section keeps free.
+                        if not self._reserved_hit(ds, s, e) and _free(fid, rid, ds, s, e, gene):
                             gene['start_time'] = s
                             gene['end_time']   = e
                             gene['days_list']  = list(ds)
@@ -6126,6 +6195,9 @@ class IntelligentScheduler:
                             break
                 if _pub_conflict:
                     break
+            # ...or on a Bridging-section class time this section keeps free.
+            if not _pub_conflict and self._reserved_hit(_new_days, _new_s, _new_e):
+                _pub_conflict = True
             if _pub_conflict:
                 child[idx] = orig_gene   # revert to pre-mutation state
 
@@ -6404,6 +6476,7 @@ class IntelligentScheduler:
                 pass  # keep existing config if the DB is temporarily unavailable
             refresh_time_blocks(self._hc_cfg)   # HC6 blocks = the admin's current list
             self.csp = CSPValidator(config=self._hc_cfg)
+            self._reserved_section_slots = {}   # set below once the school year is known
             raw_pairs = self._hc_cfg.get('hc_day_pairs', '')
             self._builder_pairs = (
                 _parse_day_pairs(raw_pairs) if raw_pairs
@@ -6585,6 +6658,14 @@ class IntelligentScheduler:
 
             ay_rows    = query_db("SELECT academicyearid FROM academicyear ORDER BY yearstart DESC LIMIT 1")
             current_ay = acad_year_id or (ay_rows[0]['academicyearid'] if ay_rows else '')
+
+            # A Regular section keeps its Bridging section's class times free (HC12): the
+            # builder, repairs and mutation never place a class there, and the validator
+            # reports one that is. Off with the section-conflict rule; empty for a
+            # Bridging section or a program/year without one.
+            if self._hc_cfg.get('hc_section_conflict_enabled', 1):
+                self._reserved_section_slots, self.csp.reserved_section_slots = \
+                    self._load_bridging_reservations(section_id, term, current_ay)
 
             # NOTE: a legacy CaseBasedRetriever.retrieve_best_case_faculty() call used to be
             # merged in here as a second, unprotected CBR faculty hint. Removed — it duplicated

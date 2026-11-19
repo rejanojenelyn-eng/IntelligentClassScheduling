@@ -177,6 +177,7 @@
     .st-badge.pub   { background:#d4edda; color:#1e6b34; }
     .st-badge.draft { background:#fff3cd; color:#856404; }
     .st-badge.unsaved { background:#e3eef7; color:#1f4f82; }
+    .st-badge.bridging { background:#f6e3e3; color:#8b1a1a; }
     .st-del { border:none; background:rgba(231,76,60,0.9); color:#fff; border-radius:50%; width:22px; height:22px;
         cursor:pointer; font-size:0.65rem; }
     .st-del:hover { background:#c0392b; }
@@ -200,6 +201,15 @@
     .schedule-pill { position: absolute; border-radius: 4px; padding: 4px; color: white;
         font-size: 0.75rem; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: box-shadow 0.1s; }
     .schedule-pill:hover { transform: none; box-shadow: 0 3px 8px rgba(0,0,0,0.25); z-index: 20; }
+    /* A Bridging section's class shown in its Regular sections: read-only, kept free. */
+    #gridWrapper .schedule-pill.pill-bridging { color: #5c1f1f; border: 2px dashed #8b1a1a; cursor: help;
+        background: repeating-linear-gradient(135deg, #f6e3e3 0 8px, #efd2d2 8px 16px);
+        display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    .pill-bridging .pill-bridging-tag { font-size: 0.55rem; font-weight: 800; letter-spacing: 0.5px;
+        background: #8b1a1a; color: #fff; border-radius: 3px; padding: 1px 5px; margin-bottom: 3px; }
+    .pill-bridging .pill-subject { font-weight: 800; }
+    .pill-bridging .pill-bridging-sect { font-size: 0.6rem; margin-top: 2px; opacity: 0.9;
+        max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* ── Conflict Modal ──
        Redesigned to read as a plain, calm heads-up rather than a hazard warning: no
@@ -2995,7 +3005,8 @@ async function _findSiblingSliceOverlap(o) {
     try {
         const resp = await fetch(`/api/manual/section_schedule?program=${encodeURIComponent(o.prog)}&year_level=${encodeURIComponent(o.yl)}&ay_id=${encodeURIComponent(o.ay)}&semester=${encodeURIComponent(o.sem)}&section_id=${encodeURIComponent(o.sectionId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}`);
         const rows = await resp.json();
-        const mine = (Array.isArray(rows) ? rows : []).filter(s => String(s.subjectcode || '').toUpperCase() === o.subjCode);
+        const mine = (Array.isArray(rows) ? rows : []).filter(s => !s.bridging_reserved &&
+            String(s.subjectcode || '').toUpperCase() === o.subjCode);
         // A Draft is the definitive replacement for the subject's Published rows.
         const hasDraft  = mine.some(s => s.status === 'Draft');
         const inPending = new Set(pendingManualSchedule
@@ -3428,7 +3439,10 @@ window.confirmAndPlace = async function() {
                     kind: 'section', code: s.subjectcode, name: s.subjectname, day: dayVal,
                     start: (typeof timeSlots !== 'undefined' ? timeSlots[s.starttimeid - 1] : s.starttimeid), end: (typeof timeSlots !== 'undefined' ? timeSlots[s.endtimeid - 1] : s.endtimeid),
                     faculty: s.instructor || 'TBA',
-                    section: _currentSectionLabel() || `${prog} ${yl}`, room: s.roomname || s.room || 'TBA',
+                    section: s.bridging_reserved
+                        ? `${s.bridging_section} (bridging class — this time is kept free for ${_currentSectionLabel() || `${prog} ${yl}`})`
+                        : (_currentSectionLabel() || `${prog} ${yl}`),
+                    room: s.roomname || s.room || 'TBA',
                 }));
                 return;
             }
@@ -13433,7 +13447,7 @@ window.triggerCascade = async function(skipGridRender) {
         const url = `/api/get_offerings_schedule?program=${encodeURIComponent(v('sel_prog'))}` +
             `&year_level=${encodeURIComponent(v('sel_year'))}&semester=${encodeURIComponent(semVal())}` +
             `&ay=${encodeURIComponent(ayVal())}&status=active&section_id=${encodeURIComponent(sect)}` +
-            `&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&_t=${Date.now()}`;
+            `&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&include_bridging=1&_t=${Date.now()}`;
         return fetch(url, { cache: 'no-store' })
             .then(r => r.ok ? r.json() : null)
             .then(raw => Array.isArray(raw) ? raw : null)
@@ -13485,6 +13499,10 @@ window.triggerCascade = async function(skipGridRender) {
         const genCodes = new Set(pendingManualSchedule.filter(c => c.fromGenerator &&
             (!c.section_id || String(c.section_id) === sect)).map(c => c.subject_code));
         const saved = secRows.find(r => {
+            if (r.bridging_reserved) {   // the Bridging section's class: always blocks
+                const x = timeStrToSlotIdx(r.start_time), y = timeStrToSlotIdx(r.end_time);
+                return r.daydesc === slot.day && x && y > x && slot.si < y && ei > x;
+            }
             if (r.daydesc !== slot.day || genCodes.has(r.subjectcode)) return false;
             if (typeof _isDbRowHidden === 'function' && _isDbRowHidden(r)) return false;
             const x = timeStrToSlotIdx(r.start_time), y = timeStrToSlotIdx(r.end_time);
@@ -13494,6 +13512,9 @@ window.triggerCascade = async function(skipGridRender) {
                 r.daydesc === s.day && x === s.si && y === s.ei) return false;
             return slot.si < y && ei > x;
         });
+        if (saved && saved.bridging_reserved) return `${saved.daydesc}, ` +
+            `${timeSlots[timeStrToSlotIdx(saved.start_time) - 1]} – ${timeSlots[timeStrToSlotIdx(saved.end_time) - 1]} ` +
+            `is kept free for the bridging class ${saved.subjectcode} (${saved.bridging_section}).`;
         if (saved) return `This section already has ${saved.subjectcode} on ${saved.daydesc}, ` +
             `${timeSlots[timeStrToSlotIdx(saved.start_time) - 1]} – ${timeSlots[timeStrToSlotIdx(saved.end_time) - 1]}.`;
         return '';

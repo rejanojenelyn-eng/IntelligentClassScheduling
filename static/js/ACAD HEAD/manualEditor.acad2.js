@@ -1116,7 +1116,7 @@ async function renderProgramTimetable() {
     if (labelEl)   labelEl.textContent  = `${progName.toUpperCase()}  —  ${yrLabels[yl] || yl}  |  A.Y ${_ayDisp}  |  ${semLabels[sem] || sem}`;
 
     try {
-        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&_t=${Date.now()}`;
+        const url = `/api/get_offerings_schedule?program=${encodeURIComponent(prog)}&year_level=${yl}&semester=${sem}&ay=${encodeURIComponent(ay)}&status=active&section_id=${encodeURIComponent(_pvSectId)}&scheduler_mode=${typeof SCHED_MODE !== 'undefined' ? SCHED_MODE : 'official'}&include_bridging=1&_t=${Date.now()}`;
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok) return;
         const raw = await resp.json();
@@ -1135,6 +1135,13 @@ async function renderProgramTimetable() {
 
         const sessByKey = new Map();
         (raw || []).forEach(s => {
+            // The Bridging section's class times (read-only, kept free for this Regular
+            // section's bridging students) — never this section's own rows, so none of the
+            // own-row hiding/merging below applies to them.
+            if (s.bridging_reserved) {
+                sessByKey.set(`BR|${s.bridging_section}|${s.subjectcode}|${s.daydesc}|${timeStrToSlotIdx(s.start_time)}`, s);
+                return;
+            }
             // Generator schedule replaces the old DB schedule for any subject it covers.
             if (_genSubjectCodes.has(s.subjectcode)) return;
             // Same hiddenDbSchedules check renderGrid (Room View) applies — a raw row whose
@@ -1286,12 +1293,13 @@ function _renderSessionTable() {
     const _curSect = (document.getElementById('bc-sect-text')?.textContent || '').trim();
     body.innerHTML = rows.map(s => {
         const st = startOf(s), et = endOf(s);
-        const key = `${s.subjectcode}_${s.daydesc}_${st}`;
+        const key = `${s.bridging_reserved ? 'BR_' : ''}${s.subjectcode}_${s.daydesc}_${st}`;
         const sects = (s._mergedSections || []).map(m => m.sectionname || (m.programcode ? `${m.programcode}-${m.year_level}` : ''))
             .filter(Boolean);
         const section = sects.length ? sects.join(', ')
             : (s.sectionname || (!room ? _curSect : '') || (s.programcode ? `${s.programcode}-${s.year_level || ''}` : ''));
-        const status = s.status === 'GeneratorTransfer' ? ['unsaved', 'UNSAVED (GENERATED)']
+        const status = s.bridging_reserved ? ['bridging', `BRIDGING · ${s.bridging_section || ''}`]
+            : s.status === 'GeneratorTransfer' ? ['unsaved', 'UNSAVED (GENERATED)']
             : (s.isPreview || (!s.versionid && s.temp_id && String(s.status || '').toLowerCase() !== 'published')) ? ['unsaved', 'UNSAVED']
             : s.isEdited ? ['unsaved', 'EDITED']
             : String(s.status || '').toLowerCase() === 'published' ? ['pub', 'PUBLISHED'] : ['draft', 'DRAFT'];
@@ -1303,7 +1311,7 @@ function _renderSessionTable() {
             <td>${esc(instr)}</td>
             <td>${esc(section)}</td>
             <td>${esc(s.roomname || s.room)}</td>
-            <td><span class="st-badge ${status[0]}">${status[1]}</span></td>
+            <td><span class="st-badge ${status[0]}">${esc(status[1])}</span></td>
             <td>${canDel ? `<button type="button" class="st-del" title="Remove"
                     onclick="event.stopPropagation(); _deleteSessionFromTable(this.closest('tr').dataset.key)">
                     <i class="fas fa-times"></i></button>` : ''}</td>
@@ -1382,6 +1390,39 @@ function _renderProgPills(sessions, prog, yl) {
             const pill = document.createElement('div');
             pill.className = 'schedule-pill';
 
+            const w     = (colWidth - 6) / (overlapCount || 1);
+            const pillH = Math.max((endIdx - startIdx) * rowHeight - 6, 20); // min 20px to remain visible
+
+            // Bridging section's class: read-only block — no ×, no edit, never dragged.
+            if (sess.bridging_reserved) {
+                const brSect = sess.bridging_section || 'Bridging section';
+                const timeTxt = (timeSlots[startIdx - 1] && timeSlots[endIdx - 1])
+                    ? `${timeSlots[startIdx - 1]} – ${timeSlots[endIdx - 1]}` : '';
+                const esc = t => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                pill.classList.add('pill-bridging');
+                pill.style.width  = (w - 2) + 'px';
+                pill.style.height = pillH + 'px';
+                pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
+                pill.style.top    = (topOff  + (startIdx - 1) * rowHeight + 3) + 'px';
+                pill.dataset.dayIdx = dayIdx; pill.dataset.ovIdx = overlapIndex; pill.dataset.ovCnt = overlapCount || 1;
+                pill.dataset.pillKey = `BR_${sess.subjectcode}_${sess.daydesc}_${startIdx}`;
+                pill.title = `${sess.subjectcode} — ${sess.subjectname || ''}\nBridging: ${brSect}\n${timeTxt}\n` +
+                    `${sess.roomname || 'TBA'}\n\nReserved for the bridging class — this section can't use this time.\n` +
+                    `Edit it from section ${brSect}.`;
+                pill.innerHTML = `<div class="pill-bridging-tag">BRIDGING</div>` +
+                    `<div class="pill-subject">${esc(sess.subjectcode)}</div>` +
+                    (pillH >= 70 ? `<div class="pill-bridging-sect">${esc(brSect)}</div>` : '');
+                pill.onclick = () => {
+                    const msg = `${sess.subjectcode} (${timeTxt}, ${sess.daydesc}) is the bridging class of ` +
+                        `${brSect}. This time is kept free for this section's bridging students. ` +
+                        `To change it, open section ${brSect}.`;
+                    if (window.DSSLive && typeof window.DSSLive.toast === 'function') window.DSSLive.toast(msg);
+                    else if (typeof showValidationModal === 'function') showValidationModal('Bridging Class', msg);
+                };
+                wrapper.appendChild(pill);
+                return;
+            }
+
             const isDraft       = !sess.status || sess.status.toLowerCase() !== 'published';
             const isGenTransfer = sess.status === 'GeneratorTransfer';
 
@@ -1407,8 +1448,6 @@ function _renderProgPills(sessions, prog, yl) {
                 if (editKey === sessKey) pill.classList.add('pill-editing');
             }
 
-            const w     = (colWidth - 6) / (overlapCount || 1);
-            const pillH = Math.max((endIdx - startIdx) * rowHeight - 6, 20); // min 20px to remain visible
             pill.style.width  = (w - 2) + 'px';
             pill.style.height = pillH + 'px';
             pill.style.left   = (leftOff + dayIdx * colWidth + overlapIndex * w + 3) + 'px';
@@ -2279,7 +2318,10 @@ async function confirmAndPlace() {
                         kind: 'section', code: s.subjectcode, name: s.subjectname, day: dayVal,
                         start: timeSlots[s.starttimeid - 1], end: timeSlots[s.endtimeid - 1],
                         faculty: s.instructor || 'TBA',
-                        section: _currentSectionLabel() || `${prog} ${yl}`, room: s.roomname || s.room || 'TBA',
+                        section: s.bridging_reserved
+                            ? `${s.bridging_section} (bridging class — this time is kept free for ${_currentSectionLabel() || `${prog} ${yl}`})`
+                            : (_currentSectionLabel() || `${prog} ${yl}`),
+                        room: s.roomname || s.room || 'TBA',
                     }));
                     return;
                 }
