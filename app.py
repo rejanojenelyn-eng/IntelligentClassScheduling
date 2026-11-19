@@ -1014,6 +1014,15 @@ SESSION_IDLE_LIMIT   = timedelta(minutes=30)   # pages open but nobody has used 
 # Navigating between pages is safe — the next page is registered before the old page
 # reports itself closed, so there is no moment with no open page.
 SESSION_NO_PAGE_GRACE = timedelta(seconds=10)
+# Account Setup sends people to their inbox for an email code. A phone pauses the page
+# while its mail app is open, so no heartbeat arrives: the 90-second limit signed those
+# teachers out mid-setup. While an account is still in setup (or must change its
+# password) its pages may go this long without checking in. A real page load while
+# none of its pages is open still ends the session at once (the browser was closed).
+SETUP_CLOSED_LIMIT = timedelta(minutes=15)
+# Signing in again within this long after leaving an unfinished setup continues it
+# where it stopped (the progress is kept in account_setup_pending), instead of starting over.
+SETUP_RESUME_WINDOW = timedelta(hours=2)
 _SESSION_PUBLIC_ENDPOINTS = ('static', 'index', 'login', 'logout', 'favicon',
                              'share_qr', 'share_qr_poster')
 
@@ -1037,14 +1046,15 @@ def _track_login(sid):
         _open_pages[sid] = {'pages': {}, 'closed_at': None}
 
 
-def _no_open_page_since(sid, now):
+def _no_open_page_since(sid, now, closed_limit=None):
     """Seconds since the login's last open page closed, or None while a page is open
-    (or when nothing is known about this login)."""
+    (or when nothing is known about this login). A page silent for longer than
+    closed_limit (seconds; default SESSION_CLOSED_LIMIT) counts as closed."""
     with _open_pages_lock:
         entry = _open_pages.get(sid)
         if not entry:
             return None
-        stale = now - SESSION_CLOSED_LIMIT.total_seconds()
+        stale = now - (closed_limit or SESSION_CLOSED_LIMIT.total_seconds())
         for pid in [p for p, seen in entry['pages'].items() if seen < stale]:
             seen = entry['pages'].pop(pid)             # died without sending its beacon
             entry['closed_at'] = max(entry['closed_at'] or 0, seen)
@@ -1060,7 +1070,12 @@ def _expire_stale_session():
     now         = datetime.now().timestamp()
     last_seen   = session.get('last_seen')
     last_active = session.get('last_active') or last_seen
-    no_page_for = _no_open_page_since(session.get('sid'), now)
+    # An account still in Account Setup gets SETUP_CLOSED_LIMIT (see there) for pages that
+    # stopped checking in and for background calls after its page was hidden.
+    in_setup     = bool(session.get('must_change_password')) or not session.get('account_setup_complete', True)
+    closed_limit = (SETUP_CLOSED_LIMIT if in_setup else SESSION_CLOSED_LIMIT).total_seconds()
+    no_page_grace = closed_limit if in_setup else SESSION_NO_PAGE_GRACE.total_seconds()
+    no_page_for = _no_open_page_since(session.get('sid'), now, closed_limit)
     # Opening a page (landing, dashboard, any URL) while none of this login's pages is
     # open means the tabs/browser were closed — strict, no grace. In-app navigation is
     # unaffected: the browser requests the next page BEFORE the current one reports
@@ -1072,10 +1087,10 @@ def _expire_stale_session():
     _fetch_mode = request.headers.get('Sec-Fetch-Mode')
     _page_request = (_fetch_mode == 'navigate') if _fetch_mode else not request.path.startswith('/api/')
     if (last_seen is None
-            or now - last_seen   > SESSION_CLOSED_LIMIT.total_seconds()
+            or now - last_seen   > closed_limit
             or now - last_active > SESSION_IDLE_LIMIT.total_seconds()
             or (no_page_for is not None
-                and (_page_request or no_page_for > SESSION_NO_PAGE_GRACE.total_seconds()))
+                and (_page_request or no_page_for > no_page_grace))
             or (_page_request and _login_unknown(session.get('sid')))):
         with _open_pages_lock:
             _open_pages.pop(session.get('sid'), None)
@@ -2615,17 +2630,23 @@ def login():
         session['role']     = db_role
         session['must_change_password']   = must_change
         session['account_setup_complete'] = setup_done
+        resumed = False
         if must_change or not setup_done:
-            # Whatever an earlier, unfinished Account Setup left (the tab was closed,
-            # the session expired) is thrown away: setup starts again from the saved account.
-            _setup_discard(user_data.get('username'))
+            # An unfinished Account Setup left less than SETUP_RESUME_WINDOW ago (the
+            # session ended: the phone paused the page while the mail app was open, the
+            # tab was closed, the server restarted) continues where it stopped. Older
+            # leftovers are thrown away: setup starts again from the saved account.
+            resumed = _setup_resume(user_data.get('username'))
+            if not resumed:
+                _setup_discard(user_data.get('username'))
         session['last_seen'] = session['last_active'] = datetime.now().timestamp()
         session['sid'] = uuid.uuid4().hex   # keys this login's open-page tracking
         _track_login(session['sid'])
         write_activity_log('Signed In',
                            f"{db_role} signed in"
                            + (' for the first time (Account Setup required)' if not setup_done
-                              else ' (must change password)' if must_change else ''),
+                              else ' (must change password)' if must_change else '')
+                           + ('; continued an unfinished Account Setup' if resumed else ''),
                            category='account', color=_LOG_COLORS['account'])
         try:
             _conn2 = get_db_connection(); _cur2 = _conn2.cursor()
@@ -2814,6 +2835,17 @@ def forgot_password_new():
             return _fp_page('reset', e.status, error=e.message)
     finally:
         conn.close()
+    _c = get_db_connection()
+    if _c is not None:
+        _cr = _c.cursor()
+        try:
+            _setup_forget_password(_cr, username)
+            _c.commit()
+        except Exception as e:
+            _c.rollback()
+            print(f"[forgot password] clearing setup password failed: {type(e).__name__}")
+        finally:
+            _cr.close(); _c.close()
     session.pop('fp_rid', None); session.pop('fp_token', None)
     write_activity_log('Password Reset',
                        "Password reset with Forgot Password (email code verified)"
@@ -3089,10 +3121,13 @@ def _enforce_account_setup():
         return
     if ep.startswith('account_setup_'):
         return
-    if session.get('must_change_password'):
+    if session.get('must_change_password') and not _setup_password_chosen():
         return redirect(url_for('account_setup_password'))
     if not session.get('account_setup_complete', True):
-        return redirect(url_for('account_setup_photo'))
+        # A continued setup opens at the step it reached (first time: the first optional step).
+        return redirect(url_for(_setup_resume_endpoint()))
+    if session.get('must_change_password'):
+        return redirect(url_for('account_setup_password'))
 
 _SETUP_STEPS = [
     ('password', 'Password',          'account_setup_password'),
@@ -3110,29 +3145,109 @@ _EMPLOYMENT_STATUSES = ('Permanent', 'Temporary', 'Part-Time', 'Contractual')   
 _DESIGNEE_TYPE       = 'Designee'
 
 # Account Setup saves nothing until Save and Confirm on the Review step. Until then
-# every change is a draft: plain values in session['setup_draft'] (email, contact,
-# photo URL, Review-step edits), the new password's hash in account_setup_pending
-# (kept off the client cookie), and a picked photo as a file not yet linked to the
-# account. Leaving setup, signing out, or signing in again after the tab was closed
-# throws the drafts away (_setup_discard).
+# every change is a draft, kept in account_setup_pending (one row per account): the
+# new password's hash, and `draft` (email + whether it was verified, contact, photo URL,
+# Review-step edits, the step reached). A picked photo is a file not yet linked to the
+# account. The row — not the login cookie — is what counts: the cookie keeps only a copy
+# (session['setup_draft']), because a background request answered after a newer one
+# (e.g. a heartbeat outliving the email-code check) can put back an older cookie.
+# Leaving setup throws the drafts away (_setup_discard); signing in again within
+# SETUP_RESUME_WINDOW continues them (_setup_resume), later sign-ins start over.
+
+_SETUP_RESUME_STEPS = ('account_setup_photo', 'account_setup_email', 'account_setup_contact',
+                       'account_setup_verify')
 
 def _setup_ctx(step):
     idx = [s[0] for s in _SETUP_STEPS].index(step)
     return {'steps': _SETUP_STEPS, 'step_index': idx, 'step_key': step}
 
+def _setup_row(username=None):
+    """This account's unsaved Account Setup progress (account_setup_pending), or None.
+    Read once per request (cached in g; the writers below reset it)."""
+    username = username or session.get('username')
+    if not username:
+        return None
+    cached = g.get('_setup_row')
+    if cached is not None and cached[0] == username:
+        return cached[1]
+    row = query_db("SELECT passwordhash, draft FROM account_setup_pending WHERE username = %s",
+                   (username,), one=True)
+    g._setup_row = (username, row)
+    return row
+
 def _setup_draft():
-    return session.get('setup_draft') or {}
+    row = _setup_row()
+    if row is not None:
+        return dict(row.get('draft') or {})
+    return dict(session.get('setup_draft') or {})
+
+def _setup_write_draft(d):
+    session['setup_draft'] = d
+    username = session.get('username')
+    conn = get_db_connection() if username else None
+    if conn is None:
+        return
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO account_setup_pending (username, draft, updated_at) VALUES (%s, %s, NOW())
+            ON CONFLICT (username) DO UPDATE SET draft = EXCLUDED.draft, updated_at = NOW()
+        """, (username, psycopg2.extras.Json(d)))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[account setup] keeping progress failed: {type(e).__name__}")
+    finally:
+        cur.close(); conn.close()
+    g._setup_row = None
 
 def _setup_set_draft(**kw):
-    d = dict(_setup_draft())
+    d = _setup_draft()
     d.update(kw)
-    session['setup_draft'] = d
+    _setup_write_draft(d)
 
 def _setup_clear_draft(*keys):
-    d = dict(_setup_draft())
+    d = _setup_draft()
     for k in keys:
         d.pop(k, None)
-    session['setup_draft'] = d
+    _setup_write_draft(d)
+
+def _setup_password_chosen():
+    """A new password was already chosen in this setup (kept until Save and Confirm)."""
+    if session.get('setup_password_set'):
+        return True
+    row = _setup_row()
+    return bool(row and row.get('passwordhash'))
+
+def _setup_mark_step(endpoint):
+    """Remember the step the user reached, so a resumed setup opens there."""
+    if _setup_draft().get('_at') != endpoint:
+        _setup_set_draft(_at=endpoint)
+
+def _setup_resume_endpoint():
+    at = _setup_draft().get('_at')
+    return at if at in _SETUP_RESUME_STEPS else 'account_setup_photo'
+
+def _setup_resume(username):
+    """Called at sign-in for an account still in setup. When it left an unfinished setup
+    less than SETUP_RESUME_WINDOW ago (its session ended: a phone paused the page while
+    the mail app was open, the tab was closed, the server restarted), continue it.
+    Returns True when there was recent progress to continue."""
+    row = query_db("""
+        SELECT passwordhash, draft FROM account_setup_pending
+        WHERE username = %s AND COALESCE(updated_at, created_at) >= NOW() - %s
+    """, (username, SETUP_RESUME_WINDOW), one=True)
+    if not row:
+        return False
+    session['setup_draft'] = dict(row.get('draft') or {})
+    if row.get('passwordhash'):
+        session['setup_password_set'] = True
+    return True
+
+def _setup_forget_password(cur, username):
+    """Someone else set this account's password (Admin reset, Forgot Password): a new
+    password chosen earlier in an unfinished setup must not come back on resume."""
+    cur.execute("UPDATE account_setup_pending SET passwordhash = NULL WHERE username = %s", (username,))
 
 def _setup_url(endpoint):
     """URL of a setup step, keeping ?from=review when the user came from the Review page's Edit link."""
@@ -3144,7 +3259,7 @@ def _setup_next(endpoint):
 
 def _setup_needs_password():
     """The default password must still be replaced and no new one was chosen in this setup."""
-    return bool(session.get('must_change_password')) and not session.get('setup_password_set')
+    return bool(session.get('must_change_password')) and not _setup_password_chosen()
 
 def _setup_guard():
     """Redirect for anyone who may NOT be on an optional step right now (or None)."""
@@ -3171,10 +3286,12 @@ def _setup_store_password(username, pw_hash):
     cur = conn.cursor()
     try:
         cur.execute("""
-            INSERT INTO account_setup_pending (username, passwordhash) VALUES (%s, %s)
-            ON CONFLICT (username) DO UPDATE SET passwordhash = EXCLUDED.passwordhash, created_at = NOW()
+            INSERT INTO account_setup_pending (username, passwordhash, updated_at) VALUES (%s, %s, NOW())
+            ON CONFLICT (username) DO UPDATE SET passwordhash = EXCLUDED.passwordhash, created_at = NOW(),
+                                                 updated_at = NOW()
         """, (username, pw_hash))
         conn.commit()
+        g._setup_row = None
         return True
     except Exception as e:
         conn.rollback()
@@ -3212,6 +3329,7 @@ def _setup_discard(username):
         _sweep_profile_photo_files(username, keep)
     for k in ('setup_draft', 'setup_password_set', 'email_verified'):
         session.pop(k, None)
+    g._setup_row = None
 
 @app.route('/account-setup/leave', methods=['POST'])
 def account_setup_leave():
@@ -3263,6 +3381,7 @@ def account_setup_email():
         return redirect(_setup_next('account_setup_contact'))
 
 
+    _setup_mark_step('account_setup_email')
     return render_template('setup/setup_email.html', verified_email=verified,
                            draft_email=draft.get('email_typed', ''),
                            code_length=_emailchange.CODE_LENGTH, code_ttl=_emailchange.CODE_TTL_MINUTES,
@@ -3300,6 +3419,7 @@ def account_setup_photo():
         return redirect(_setup_next('account_setup_email'))
 
 
+    _setup_mark_step('account_setup_photo')
     return render_template('setup/setup_photo.html', current_photo=current, **_setup_ctx('photo'))
 
 @app.route('/account-setup/contact', methods=['GET', 'POST'])
@@ -3359,6 +3479,7 @@ def account_setup_contact():
 
     shown = (draft['contact_typed'] if 'contact_typed' in draft
              else draft.get('contact_input') or acc.get('contactnumber') or '')
+    _setup_mark_step('account_setup_contact')
     return render_template('setup/setup_contact.html', draft_contact=shown, **_setup_ctx('contact'))
 
 
@@ -3378,7 +3499,7 @@ def account_setup_password():
 
 
     changing = request.args.get('change') == '1'
-    if in_setup and session.get('setup_password_set') and not changing:
+    if in_setup and _setup_password_chosen() and not changing:
         # A new password was chosen in this setup; it takes effect on Save and Confirm.
         if request.method == 'POST':
             return redirect(url_for('account_setup_photo'))
@@ -3578,6 +3699,8 @@ def _setup_commit(username, draft, has_faculty):
         old_photo = acc['profile_photo']
         cur.execute("SELECT passwordhash FROM account_setup_pending WHERE username = %s", (username,))
         pending = cur.fetchone()
+        if pending and not pending['passwordhash']:
+            pending = None                  # progress only (email, photo...), no new password chosen
         if session.get('must_change_password') and not pending:
             session.pop('setup_password_set', None)
             raise _SetupProblem("Please set your new password again, then confirm your information.")
@@ -3633,6 +3756,7 @@ def _setup_commit(username, draft, has_faculty):
     session['account_setup_complete'] = True
     for k in ('setup_draft', 'setup_password_set'):
         session.pop(k, None)
+    g._setup_row = None
     session['setup_just_completed'] = True
     if new_username:
         session['username'] = new_username
@@ -3834,10 +3958,12 @@ def account_setup_verify():
     photo = (draft['photo'] if 'photo' in draft else row.get('profile_photo')) or ''
     edit_allowed = {f: f not in pending_fields and not (employment_locked and f in _EMPLOYMENT_FIELDS)
                     for f in info}
+    _setup_mark_step('account_setup_verify')
     return render_template('setup/setup_verify.html',
                            info=info, full_name=full_name,
                            account_email=email,
-                           email_verified=bool(email) and email.strip().lower() == session.get('email_verified'),
+                           email_verified=bool(email) and email.strip().lower() in
+                                          (session.get('email_verified'), draft.get('email_verified')),
                            account_contact=contact,
                            profile_photo=photo,
                            pending_corrections=pending,
@@ -30080,6 +30206,7 @@ def _reset_to_temporary_password(cur, userid, username):
     Forgot Password codes stop working."""
     cur.execute("UPDATE accounts SET passwordhash = %s, must_change_password = TRUE WHERE userid = %s",
                 (generate_password_hash(f"PUP@{username}"), userid))
+    _setup_forget_password(cur, username)
     cur.execute("""UPDATE password_reset_requests
                    SET invalidated_at = NOW(), code_hash = NULL, reset_token_hash = NULL
                    WHERE userid = %s AND used_at IS NULL AND invalidated_at IS NULL""", (userid,))
@@ -36669,8 +36796,11 @@ def api_user_email_update():
                                      save=not in_setup)
         session['email_verified'] = saved.lower()     # the Review step shows this address as Verified
         if in_setup:
-            _setup_set_draft(email=saved)
-            _setup_clear_draft('email_typed')
+            # Kept in account_setup_pending, so neither a stale cookie nor signing in again loses it.
+            d = _setup_draft()
+            d.pop('email_typed', None)
+            d.update(email=saved, email_verified=saved.lower())
+            _setup_write_draft(d)
             return jsonify({'success': True, 'email': saved})
         write_activity_log(action='Email Changed',
                            details=f"{u} changed their email address (verified by email code)",
@@ -46080,6 +46210,14 @@ def _run_startup_migrations():
                username     VARCHAR(50) PRIMARY KEY,
                passwordhash VARCHAR(255) NOT NULL,
                created_at   TIMESTAMP NOT NULL DEFAULT NOW())""",
+    ])
+    # The whole unsaved Account Setup now lives in this row (not only the password), so a
+    # stale login cookie can't drop a verified email and signing in again can continue it.
+    # updated_at has no default: rows from before keep NULL and fall back to created_at.
+    _step('sm_account_setup_pending_draft', [
+        "ALTER TABLE account_setup_pending ALTER COLUMN passwordhash DROP NOT NULL",
+        "ALTER TABLE account_setup_pending ADD COLUMN IF NOT EXISTS draft JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE account_setup_pending ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
     ])
 
     # Profile picture + last login on the account. The image itself is a file in
