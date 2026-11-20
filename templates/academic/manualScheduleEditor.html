@@ -3254,7 +3254,7 @@ window.confirmAndPlace = async function() {
             const o = _sv.other;
             await showConflictModal(_conflictDetail({
                 kind: 'room', code: o.code || 'Another class',
-                name: `${roomName} is a shared room — classes can share it only at exactly the same time (merge-set subjects like NSTP may overlap)`,
+                name: `${roomName} is a shared room and has no seats left at this time`,
                 day: dayVal,
                 start: (typeof timeSlots !== 'undefined' ? timeSlots[o.s - 1] : o.s),
                 end: (typeof timeSlots !== 'undefined' ? timeSlots[o.e - 1] : o.e),
@@ -10204,9 +10204,7 @@ function _applyRoomAvailabilityFilter(rowId) {
                 && !(g.merge && startIdx === g.startIdx && endIdx === g.endIdx));
             if (blocked.length) {
                 item.classList.add('room-unavailable');
-                item.title = blocked.some(g => !g.merge)
-                    ? 'Shared room is full at this time.'
-                    : 'Shared room: classes can share it only at exactly the same time (merge-set subjects like NSTP may overlap).';
+                item.title = 'Shared room is full at this time.';
             }
             return;
         }
@@ -10302,7 +10300,7 @@ function _getOccupiedRanges(roomId, day, ay, sem, excludeTempId, excludeVersionI
                                               sec: 'p' + (c.section_id ?? c.temp_id) });
     });
 
-    // Shared room: classes may share it only at exactly the same time, up to its limit.
+    // Shared room: classes may overlap at any times, up to its limit of sections at once.
     const _sharedLim = (window.SHARED_ROOM_LIMITS || {})[String(roomId)];
     if (_sharedLim) return _sharedRoomRanges(ranges, _sharedLim, _tagOf(curSubj));
     return ranges;
@@ -10345,15 +10343,7 @@ async function _sharedRoomPlaceCheck(roomId, day, startId, endId, ay, sem) {
     });
     // This section's own rows are this class, not another one sharing the room.
     const others = items.filter(it => !(curSect && it.key === curSect));
-    // A class at a different time that overlaps: classes may share only the exact same time —
-    // except classes of the same Class Merging rule as this subject (e.g. two NSTP classes).
-    const myTag = _sharedFlexTag(_currentSubjectCode || document.getElementById('sel_subj')?.value || '');
-    const partial = others.find(it => it.s < endId && it.e > startId && !(it.s === startId && it.e === endId)
-                                      && !(myTag && _sharedFlexTag(it.code) === myTag));
-    if (partial) {
-        return { ok: false, reason: 'partial', limit, other: partial,
-                 sections: partial.label ? [partial.label] : [], count: null };
-    }
+    // Classes may overlap in a shared room at any times — only its limit of sections counts.
     // Most sections in the room at any moment of this class, this one included.
     const inside = others.filter(it => it.s < endId && it.e > startId);
     let count = 1, at = [];
@@ -10366,10 +10356,10 @@ async function _sharedRoomPlaceCheck(roomId, day, startId, endId, ay, sem) {
              sections: [...new Set(at.map(it => it.label).filter(Boolean))] };
 }
 
-/* A shared room's day as one range per EXACT class time. A time that already holds its
-   limit of sections blocks like any class; a time with seats left is `merge: true` — the
-   editor's exact-slot rule (_mgRangeBlocks): a new slice may use the room only at exactly
-   that start and end. ranges: [{startIdx, endIdx, sec}] in half-hour slot indexes. */
+/* A shared room's day as ranges. Classes may overlap there at any times, so each class
+   time is `flex` (never blocks, _mgRangeBlocks); only the moments the room already holds
+   its limit of sections block (sharedFull). ranges: [{startIdx, endIdx, sec}] in
+   half-hour slot indexes. */
 function _sharedRoomRanges(ranges, limit, myTag) {
     const groups = new Map();
     ranges.forEach(r => {
@@ -10378,12 +10368,11 @@ function _sharedRoomRanges(ranges, limit, myTag) {
         groups.get(k).secs.add(r.sec);
         groups.get(k).tags.add(r.tag || null);
     });
-    // `flex`: classes of the same Class Merging rule as this subject (e.g. NSTP) — they
-    // may partly overlap it (_mgRangeBlocks lets them through); the room's limit still
-    // applies through the full spans below.
+    // `flex`: any class may overlap it (_mgRangeBlocks lets it through); the room's limit
+    // still applies through the full spans below.
     const out = [...groups.values()].map(g => ({
         startIdx: g.startIdx, endIdx: g.endIdx,
-        merge: g.secs.size < limit, flex: !!myTag && g.tags.size === 1 && g.tags.has(myTag),
+        merge: g.secs.size < limit, flex: true,
         sharedRoom: true, sections: g.secs.size, limit }));
     // Moments the room already holds its limit of sections block any new class.
     const pts = [...new Set(ranges.flatMap(r => [r.startIdx, r.endIdx]))].sort((a, b) => a - b);

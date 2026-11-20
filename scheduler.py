@@ -2056,8 +2056,8 @@ class CSPValidator:
         return violations
 
     def _check_shared_room_limits(self, schedule, shared):
-        """HC11 for shared rooms: classes may share one only at exactly the same time, up to
-        its limit of sections for that time; a partial overlap is a room conflict."""
+        """HC11 for shared rooms: classes may share one at the same or at overlapping times,
+        as long as it never holds more than its limit of sections at any moment."""
         by_room_day = defaultdict(list)
         for cls in schedule:
             rid = cls.get('room_id')
@@ -2081,10 +2081,10 @@ class CSPValidator:
                     there = [c for c in rows if (c['start_time'], c['end_time']) == (s1, e1)]
                     a, b = here[0], there[0]
                     detail = (f"Shared room {a.get('room')} on {day}: {format_time_12h(s0)}–{format_time_12h(e0)} "
-                              f"and {format_time_12h(s1)}–{format_time_12h(e1)} overlap — classes can share it "
-                              f"only at exactly the same time (merge-set subjects like NSTP may overlap)")
+                              f"and {format_time_12h(s1)}–{format_time_12h(e1)} overlap")
                 else:
-                    a, b = here[0], (here[1] if len(here) > 1 else here[0])
+                    a = here[0]
+                    b = next((c for c in rows if c is not a and c['start_time'] < e0 and c['end_time'] > s0), a)
                     detail = (f"Shared room {a.get('room')} has {prob['count']} sections at once on {day} "
                               f"{format_time_12h(s0)}–{format_time_12h(e0)} — its limit is {lim}")
                 v = self._build_overlap_violation('HC11', a, b, [day], ('room', 'day', 'time'))
@@ -3611,11 +3611,11 @@ class IntelligentScheduler:
                 if r['faculty_id']:
                     faculty_slots[(r['faculty_id'], day)].append((start, end))
                 loaded += 1
-        # Shared rooms (Settings > Shared Rooms): classes at EXACTLY the same time may share
-        # the room up to its limit of sections. Such a time with seats left is listed as a
-        # JoinableSlot; every room check below asks shared_rooms.blocking(), which lets a
-        # class through only at exactly that time. (A generated schedule never puts two of
-        # its own classes in one room at once, so joining can't overflow the limit.)
+        # Shared rooms (Settings > Shared Rooms): classes may share the room at any times up
+        # to its limit of sections at once. Each booked slot there is a JoinableSlot; every
+        # room check below asks shared_rooms.blocking(), which blocks only when the room
+        # would be over its limit. (A generated schedule never puts two of its own classes
+        # in one room at once, so joining can't overflow the limit.)
         _shared = shared_rooms.limits()
         if _shared:
             for _key in list(room_slots):

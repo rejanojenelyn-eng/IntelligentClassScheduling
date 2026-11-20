@@ -5372,10 +5372,7 @@ def _local_shared_room_conflict(cur, semester_id, section_id, ds, exclude_offici
                                    [(st, et, f'me{section_id}', _shared_rooms.flex_tag(ds.get('subjectcode')))], lim)
     if res['ok']:
         return None
-    if res['reason'] == 'partial':
-        detail = "Shared room: another class there only partly overlaps — classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap)."
-    else:
-        detail = f"Shared room is full: {res['count']} sections at that time (limit {lim})."
+    detail = f"Shared room is full: {res['count']} sections at that time (limit {lim})."
     return {'source': 'Shared room', 'subjectcode': None, 'candidate_subject': ds.get('subjectcode'),
             'dimensions': ['Room'], 'shared_room_full': res['reason'] == 'full', 'shared_room_limit': lim,
             'shared_room_reason': res['reason'], 'detail': detail}
@@ -36901,6 +36898,12 @@ def api_faculty_my_assignments():
     except Exception as e:
         return jsonify({'success': False, 'error': _public_error(e), '_debug_emp': str(emp_num) if 'emp_num' in dir() else 'N/A'}), 500
 
+def _fmt12_hms(hms):
+    """'13:30:00' → '01:30 PM' (the same text as TO_CHAR(..., 'HH12:MI AM'))."""
+    from datetime import datetime as _dt
+    return _dt.strptime(str(hms)[:8], '%H:%M:%S').strftime('%I:%M %p')
+
+
 # --- API: Faculty's blocked time slots for a given day (published schedule occupancy) ---
 @app.route('/api/faculty/blocked_times')
 def api_faculty_blocked_times():
@@ -36961,18 +36964,18 @@ def api_faculty_blocked_times():
             _room_rows = _live_blocks("es.roomid = %s", [int(room_id)], 'room')
             _lim = _shared_rooms.limit_for(room_id)
             if _lim:
-                # Shared room: only the spans where it already holds its limit of sections.
-                from datetime import datetime as _dt
-                _ivs = [(r['start_raw'], r['end_raw'], f"{r.get('sectionname')}|{i}",
-                         _shared_rooms.flex_tag(r.get('subjectcode'))) for i, r in enumerate(_room_rows)]
-                _full = set(_shared_rooms.full_spans(_ivs, _lim))
-                for r in _room_rows:
-                    r['shared_room_limit'] = _lim
-                    r['shared_room_full'] = (r['start_raw'], r['end_raw']) in _full
-                # The request form greys out only the full times; a time that only partly
-                # overlaps a class there is refused on submit with the reason (the form
-                # can't express "this exact time only").
-                _room_rows = [r for r in _room_rows if r['shared_room_full']]
+                # Shared room: classes may overlap there at any times, so only the stretches
+                # where it already holds its limit of sections are blocked (one entry per
+                # stretch, naming a class that is there then).
+                _ivs = [(r['start_raw'], r['end_raw'], f"{r.get('sectionname')}|{i}")
+                        for i, r in enumerate(_room_rows)]
+                _spans = []
+                for _s, _e in _shared_rooms.full_spans(_ivs, _lim):
+                    _in = next((r for r in _room_rows if r['start_raw'] < _e and r['end_raw'] > _s), {})
+                    _spans.append({**_in, 'start_raw': _s, 'end_raw': _e,
+                                   'start_time': _fmt12_hms(_s), 'end_time': _fmt12_hms(_e),
+                                   'kind': 'room', 'shared_room_limit': _lim, 'shared_room_full': True})
+                _room_rows = _spans
             blocked += _room_rows
         # When a section is provided, also block times that section already has another class.
         if str(section_id).isdigit():
@@ -37540,7 +37543,7 @@ def _makeup_submit_problems(subject, section_id, faculty_empno, request_date, st
                      f"at once, and it is already full at that time on {when}.")
     elif r and r.get('shared_room_limit'):
         _add('room', f"Room {room['roomname']} is a shared room: it is used by {r.get('subjectcode')}{_span(r)} "
-                     f"on {when}. Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
+                     f"on {when}, and it has no seats left for another section at that time.")
     elif r:
         _add('room', f"Room {room['roomname']} is used by {r.get('subjectcode')}"
                      f"{' (' + r['sectionname'] + ')' if r.get('sectionname') else ''}{_span(r)} on {when}.")
@@ -38152,7 +38155,7 @@ def api_faculty_check_request_conflicts():
             elif r3 and r3.get('shared_room_limit'):
                 room_conflict = True
                 room_detail = (f"{_rl} is a shared room: it is used by {_cls(r3)}{_span(r3)} on {when}. "
-                               f"Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
+                               f"It has no seats left for another section at that time.")
             elif r3:
                 room_conflict = True
                 room_detail = f"{_rl} is used by {_cls(r3)}{_span(r3)} on {when}."
@@ -38390,8 +38393,37 @@ def api_faculty_available_rooms():
             except Exception as _mre:
                 print(f"[available_rooms merge rooms] {_mre}")
 
+        # Shared rooms (Settings > Shared Rooms): a booked shared room is still offered while
+        # it has seats left — classes may overlap there at any times, up to its limit of
+        # sections at once (same count as the submit check, _shared_room_request_block).
+        shared_info = {}
+        _limits = _shared_rooms.limits()
+        _shared_booked = [r['roomid'] for r in all_rooms
+                          if r['roomid'] in booked_ids and _shared_rooms.limit_for(r['roomid'], _limits)]
+        if _shared_booked:
+            try:
+                _st_t, _en_t = _parse_time_str(start_time), _parse_time_str(end_time)
+                _sem = query_db("SELECT semesterid FROM semester WHERE isactive = TRUE "
+                                "ORDER BY semesterid DESC LIMIT 1", one=True)
+                _rq = _request_requester(int(_sched_q)) if _sched_q.isdigit() else None
+                _ex_sch = [int(_sched_q)] if _sched_q.isdigit() else []
+                if _sem and _st_t and _en_t and _en_t > _st_t:
+                    for rid in _shared_booked:
+                        lim = _shared_rooms.limit_for(rid, _limits)
+                        occ = _shared_room_occupants(_sem['semesterid'], day, _st_t, _en_t, rid,
+                                                     on_date=req_date or None, exclude_schedule_ids=_ex_sch)
+                        mine = 'req' + str((_rq or {}).get('sectionid') or '')
+                        res = _shared_rooms.check_join([_sr_iv(o) for o in occ], [(_st_t, _en_t, mine)], lim)
+                        if res['ok']:
+                            booked_ids.discard(rid)
+                            shared_info[rid] = {'shared_limit': lim,
+                                                'shared_sections': len({o[2] for o in occ})}
+            except Exception as _sre:
+                print(f"[available_rooms shared rooms] {_sre}")
+
         available  = [{**dict(r), 'available': r['roomid'] not in booked_ids or r['roomid'] in merge_rooms,
-                       **({'merge_with': merge_rooms[r['roomid']]} if r['roomid'] in merge_rooms else {})}
+                       **({'merge_with': merge_rooms[r['roomid']]} if r['roomid'] in merge_rooms else {}),
+                       **shared_info.get(r['roomid'], {})}
                       for r in all_rooms]
         # Return only truly available rooms (a merge room is one: it hosts the same class)
         available  = [r for r in available if r['available']]
@@ -41467,12 +41499,8 @@ def _shared_room_cross_violations(schedule_data, existing, shared, section_id=No
         seen.add(key)
         rm = c.get('room') or c.get('roomname') or rid
         w0, w1 = res['with']
-        if res['reason'] == 'partial':
-            detail = (f"Shared room {rm} already has a class on {d} {_fmt_t12(w0)}–{_fmt_t12(w1)}. "
-                      f"Classes can share it only at exactly the same time (classes of a subject with a merge setting, e.g. NSTP, may overlap).")
-        else:
-            detail = (f"Shared room {rm} would have {res['count']} sections at once on {d} "
-                      f"{_fmt_t12(w0)}–{_fmt_t12(w1)} — its limit is {lim} sections.")
+        detail = (f"Shared room {rm} would have {res['count']} sections at once on {d} "
+                  f"{_fmt_t12(w0)}–{_fmt_t12(w1)} — its limit is {lim} sections.")
         out.append({
             'rule': 'HC11', 'type': RULE_LABELS['HC11'], 'subject': sc, 'target_subject_code': sc,
             'detail': detail, 'affected_components': ['room', 'day', 'time'],

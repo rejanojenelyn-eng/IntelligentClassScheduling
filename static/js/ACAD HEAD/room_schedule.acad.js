@@ -194,7 +194,7 @@ function _frsSharedNote(rid) {
     note.hidden = !lim;
     if (lim) {
         note.innerHTML = `<i class="fas fa-people-group"></i> <b>Shared room</b> — up to ${lim} sections can have ` +
-            `class here at the same time (same start and end time; NSTP and other merge-set subjects may overlap), ` +
+            `class here at once (at the same or overlapping times), ` +
             `so classes may appear side by side.`;
     }
 }

@@ -1,33 +1,29 @@
 """
 Shared rooms — Admin Settings > Merging & Calendar > Shared Rooms.
 
-A shared room (e.g. a gym, a quadrangle, a big hall) may hold several classes AT THE
-SAME TIME — different sections, subjects and faculty — when they have exactly the same
-start and end time, up to its limit of SECTIONS (a merged class of three sections counts
-as three). Each exact time is counted on its own: e.g. three sections at 7:30–9:30, then
-1:00–3:00, 3:00–5:00 and 6:00–9:00 on the same day are all fine. A class that only PARTLY
-overlaps another one in the room (3:00–6:00 vs 3:30–6:00) is still a room conflict —
-EXCEPT between two classes of subjects with the same merge setting (Settings → Class
-Merging, e.g. the NSTP rule covers every NSTP/OU code): those may overlap in any way, as
-long as the room never holds more than its limit of sections at any moment. Rooms without
-a policy keep HC11 as it is (one independent class at a time, plus valid HC16 merges).
+A shared room (e.g. a gym, a quadrangle, a big hall) may hold several classes AT ONCE —
+different sections, subjects, year levels and faculty, at the same or at different times
+(7:30–9:30 next to 8:00–10:00 is fine) — as long as the room never holds more than its
+limit of SECTIONS at any moment (a merged class of three sections counts as three).
+Rooms without a policy keep HC11 as it is (one independent class at a time, plus valid
+HC16 merges).
 
 Used by every room check — Schedule Generation, CSPValidator (HC11), the Manual Editor,
 Save Draft / Publish, the Local Scheduler and Make-up / Schedule Adjustment requests:
 
     limits() / limit_for(roomid)       {roomid(str): max_sections} (cached) / one room's limit
     flex_rules() / flex_tag(code)      Class Merging rule codes (cached) / the rule covering a subject
-    check_join(existing, new, limit)   may `new` join the room? (time rule, seats left)
+    check_join(existing, new, limit)   may `new` join the room? (seats left at every moment)
     violations(intervals, limit)       what is wrong with a set of classes in one room/day
-    full_spans(intervals, limit)       the class times that are full (for "blocked time" lists)
+    full_spans(intervals, limit)       the stretches of time the room is full (for "blocked time" lists)
     generator_slots(slots, limit) / blocking(slots, start, end)
-                                       Schedule Generation's booked-slot lists (exact times only)
+                                       Schedule Generation's booked-slot lists
 
 An interval is (start, end[, section_key[, flex_tag]]); start/end are anything comparable
 (times, timeslot ids, minutes), end exclusive, so 10:30-12:00 and 12:00-1:30 never overlap.
 Without a section_key each interval counts as one section; with one, a section is counted
-once however many of its rows are in the room at that moment. Two intervals with the same
-non-empty flex_tag (flex_tag(subject code)) may partly overlap.
+once however many of its rows are in the room at that moment. flex_tag is accepted for
+older callers and no longer matters: every class may overlap in a shared room.
 """
 import threading
 import time
@@ -166,9 +162,9 @@ def _overlaps(a, b):
 
 
 def _may_overlap(a, b):
-    """Two overlapping classes may share the room: at exactly the same time, or — at any
-    times — when both are subjects of the same Class Merging rule (e.g. two NSTP classes)."""
-    return (a[0], a[1]) == (b[0], b[1]) or (a[3] is not None and a[3] == b[3])
+    """Two overlapping classes may always share a shared room — at the same or at
+    different times, any subject. Only the room's limit of sections counts (_peak)."""
+    return True
 
 
 def _keyed(ivs):
@@ -222,30 +218,47 @@ def violations(intervals, limit):
 
 
 def full_spans(intervals, limit):
-    """[(start, end)] of the class times during which the room already holds `limit` sections."""
+    """[(start, end)] — the stretches of time during which the room already holds `limit`
+    sections (merged where they touch), e.g. classes 7:30–9:30 and 8:30–10:30 in a room
+    for 2 → [(8:30, 9:30)]. A new class overlapping one of them would overfill the room."""
     ivs = _keyed([_norm(iv) for iv in _valid(intervals)])
-    return sorted(t for t in {(x[0], x[1]) for x in ivs} if _peak(ivs, *t) >= limit)
+    pts = sorted({x[0] for x in ivs} | {x[1] for x in ivs})
+    out = []
+    for a, b in zip(pts, pts[1:]):
+        if len({x[2] for x in ivs if x[0] <= a < x[1]}) >= limit:
+            if out and out[-1][1] == a:
+                out[-1] = (out[-1][0], b)
+            else:
+                out.append((a, b))
+    return out
 
 
 class JoinableSlot(tuple):
-    """A booked (start, end) in a shared room that still has seats: a new class may use
-    the room at EXACTLY this time (any other overlap is still blocked)."""
-    __slots__ = ()
+    """A booked (start, end) in a shared room (one section's class). It blocks a new class
+    only when the room would then hold more than `limit` sections at some moment."""
+    def __new__(cls, se, limit=1):
+        obj = super().__new__(cls, (se[0], se[1]))
+        obj.limit = limit
+        return obj
 
 
 def generator_slots(slots, limit):
-    """Schedule Generation's booked (start, end) list for one shared room/day: one entry
-    per exact time, a JoinableSlot while that time has seats left (each listed slot is
-    one section's class)."""
-    counts = {}
-    for sl in slots:
-        key = (sl[0], sl[1])
-        counts[key] = counts.get(key, 0) + 1
-    return [JoinableSlot(k) if n < limit else k for k, n in counts.items()]
+    """Schedule Generation's booked (start, end) list for one shared room/day: each slot
+    (one section's class) as a JoinableSlot carrying the room's limit."""
+    return [JoinableSlot(sl, limit) for sl in slots]
 
 
 def blocking(slots, start, end):
-    """The booked slots that really block a class at start–end: a JoinableSlot doesn't
-    when the class is at exactly its time."""
-    return [sl for sl in slots
-            if not (isinstance(sl, JoinableSlot) and sl[0] == start and sl[1] == end)]
+    """The booked slots that really block a class at start–end. Ordinary slots are
+    returned as they are; a shared room's slots (JoinableSlot) block only when adding the
+    class would put more than the room's limit of sections in it at some moment — then the
+    shared slots overlapping start–end are returned."""
+    shared = [sl for sl in slots if isinstance(sl, JoinableSlot)]
+    out = [sl for sl in slots if not isinstance(sl, JoinableSlot)]
+    if shared:
+        ov = [sl for sl in shared if sl[0] < end and sl[1] > start]
+        if ov:
+            ivs = [(sl[0], sl[1], ('#', i), None) for i, sl in enumerate(ov)] + [(start, end, ('new',), None)]
+            if _peak(ivs, start, end) > max(sl.limit for sl in ov):
+                out += ov
+    return out
