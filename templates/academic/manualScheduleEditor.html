@@ -4844,7 +4844,7 @@ async function _onSubjectClick(code, name, units, hours) {
             const _b = document.getElementById('fac-stats-body');
             const _c = document.getElementById('fac-stats-chevron');
             if (_n) { _n.textContent = _lkName; _n.style.color = '#2c3e50'; _n.style.fontWeight = '900'; }
-            if (_a) { _a.style.background = '#546e7a'; _a.textContent = _facInitialsFromName(_lkName); }
+            _facPaintAvatar(_a, _lkId, _lkName);
             if (_c) { _c.className = 'fas fa-chevron-down fac-stats-chevron'; _c.style.color = ''; }
             if (_b) _b.style.display = '';
             if (typeof _updateFacultyUnitDisplay === 'function') {
@@ -5000,7 +5000,7 @@ function _setFacultyLock(facId, facName) {
         const nameEl    = document.getElementById('fac-stats-name');
         const chevron   = document.getElementById('fac-stats-chevron');
         const statsBody = document.getElementById('fac-stats-body');
-        if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = _facInitialsFromName(facName); }
+        _facPaintAvatar(avatarEl, _lockedFacultyId, facName);
         if (nameEl)   { nameEl.textContent = facName; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
         if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }
         if (statsBody) {
@@ -5023,8 +5023,7 @@ function _setFacultyLock(facId, facName) {
                     nameEl.style.fontWeight = '900';
                 }
                 if (avatarEl && avatarEl.style.background !== 'rgb(84, 110, 122)') {
-                    avatarEl.style.background = '#546e7a';
-                    avatarEl.textContent = _facInitialsFromName(_lockedFacultyName);
+                    _facPaintAvatar(avatarEl, _lockedFacultyId, _lockedFacultyName);
                 }
             });
             _facNameObserver.observe(nameEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style'] });
@@ -5786,6 +5785,30 @@ function _facInitialsFromName(name) {
     return (name.split(',')[0] || '').trim().substring(0, 2).toUpperCase() || '--';
 }
 
+// Faculty card avatar: the faculty's uploaded profile photo when they have one,
+// otherwise the initials. empNum is looked up in allFaculty (which carries `photo`).
+function _facPaintAvatar(el, empNum, name) {
+    if (!el) return;
+    el.style.background = '#546e7a';
+    const row = (empNum && typeof allFaculty !== 'undefined')
+        ? allFaculty.find(f => String(f.id) === String(empNum)) : null;
+    const photo = row && row.photo;
+    if (photo) {
+        if (el.dataset.photo === photo && el.querySelector('img')) return;
+        el.dataset.photo = photo;
+        el.textContent = '';
+        const img = document.createElement('img');
+        img.src = photo;
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;';
+        img.onerror = () => { delete el.dataset.photo; el.textContent = _facInitialsFromName(name || ''); };
+        el.appendChild(img);
+    } else {
+        delete el.dataset.photo;
+        el.textContent = _facInitialsFromName(name || '');
+    }
+}
+
 // Guards against a race where switching subjects (or faculty) right after this fetch
 // started lets an older call's response land AFTER a newer call already reset the panel
 // (e.g. to the empty-state dashes) — the old response would otherwise silently re-stamp
@@ -5823,7 +5846,7 @@ async function _updateFacultyUnitDisplay(empNum) {
             const nameEl    = document.getElementById('fac-stats-name');
             const chevron   = document.getElementById('fac-stats-chevron');
             const statsBody = document.getElementById('fac-stats-body');
-            if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = _facInitialsFromName(_lockedFacultyName); }
+            _facPaintAvatar(avatarEl, _lockedFacultyId, _lockedFacultyName);
             if (nameEl)   { nameEl.textContent = _lockedFacultyName; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
             if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }
             if (statsBody) statsBody.style.display = '';
@@ -5838,7 +5861,7 @@ async function _updateFacultyUnitDisplay(empNum) {
         const chevron  = document.getElementById('fac-stats-chevron');
         const statsBody = document.getElementById('fac-stats-body');
         
-        if (avatarEl) { avatarEl.style.background = '#cfd8dc'; avatarEl.innerHTML = '<i class="fas fa-user" style="font-size:0.85rem;opacity:0.55;"></i>'; }
+        if (avatarEl) { avatarEl.style.background = '#cfd8dc'; delete avatarEl.dataset.photo; avatarEl.innerHTML = '<i class="fas fa-user" style="font-size:0.85rem;opacity:0.55;"></i>'; }
         if (nameEl)   { nameEl.textContent = 'Select Faculty'; nameEl.style.color = '#9e9e9e'; nameEl.style.fontWeight = '600'; }
         if (typeEl)   { typeEl.textContent = 'CLICK TO SEARCH'; typeEl.style.color = '#bbb'; typeEl.style.textTransform = 'uppercase'; }
         if (chevron)  { chevron.className = 'fas fa-search fac-stats-chevron'; chevron.style.color = '#bbb'; }
@@ -5881,7 +5904,7 @@ async function _updateFacultyUnitDisplay(empNum) {
         const nameEl   = document.getElementById('fac-stats-name');
         const typeEl   = document.getElementById('fac-stats-type');
         const chevron  = document.getElementById('fac-stats-chevron');
-        if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = _facInitialsFromName(facName); }
+        _facPaintAvatar(avatarEl, empNum, facName);
         if (nameEl)   { nameEl.textContent = facName; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
         if (typeEl) {
             const _label = info => {
@@ -7707,7 +7730,7 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
             const _fsType   = document.getElementById('fac-stats-type');
             const _fsCaret  = document.getElementById('fac-stats-chevron');
             const _fsBody   = document.getElementById('fac-stats-body');
-            if (_fsAvatar) { _fsAvatar.style.background = '#546e7a'; _fsAvatar.textContent = _facInitialsFromName(fac.name); }
+            _facPaintAvatar(_fsAvatar, fac.id, fac.name);
             if (_fsName)   { _fsName.textContent = fac.name; _fsName.style.color = '#2c3e50'; _fsName.style.fontWeight = '900'; }
             if (_fsType)   { _fsType.textContent = (_facInfo && _facInfo.typename) || ''; _fsType.style.color = ''; }
             if (_fsCaret)  { _fsCaret.className = 'fas fa-chevron-down fac-stats-chevron'; _fsCaret.style.color = ''; }
@@ -7847,7 +7870,7 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
             const typeEl    = document.getElementById('fac-stats-type');
             const chevron   = document.getElementById('fac-stats-chevron');
             const statsBody = document.getElementById('fac-stats-body');
-            if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = _facInitialsFromName(_stampFac.name); }
+            _facPaintAvatar(avatarEl, _stampEmpId, _stampFac.name);
             if (nameEl)   { nameEl.textContent = _stampFac.name; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
             if (typeEl)   { typeEl.style.color = ''; }
             if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }

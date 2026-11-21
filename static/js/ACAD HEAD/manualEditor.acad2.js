@@ -971,9 +971,15 @@ function buildDSSMenu(type, sections) {
                 const initials  = _facInitials(item.text);
                 const typCls    = _facTypeCls(item.typename);
                 const typLabel  = _facTypeLabel(item.typename);
+                // Uploaded profile photo when the faculty has one, else the initials.
+                const _row      = allFaculty.find(f => String(f.id) === String(item.value));
+                const photo     = _row && _row.photo;
+                const avatarInner = photo
+                    ? `<img src="${String(photo).replace(/"/g, '&quot;')}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;" onerror="this.parentNode.textContent='${initials.replace(/'/g, '')}'">`
+                    : initials;
                 div.innerHTML = `
                     <div class="fac-opt-inner">
-                        <div class="fac-opt-avatar${isRec ? ' rec' : ''}">${initials}</div>
+                        <div class="fac-opt-avatar${isRec ? ' rec' : ''}"${photo ? ' style="padding:0;overflow:hidden;"' : ''}>${avatarInner}</div>
                         <div class="fac-opt-info">
                             <span class="fac-opt-name">${item.text}</span>
                             <div class="fac-opt-sub">
@@ -1958,7 +1964,8 @@ window.handlePillClick = async function(sessJson) {
             const typeEl    = document.getElementById('fac-stats-type');
             const chevron   = document.getElementById('fac-stats-chevron');
             const statsBody = document.getElementById('fac-stats-body');
-            if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = (typeof _facInitialsFromName === 'function' ? _facInitialsFromName(_stampFac.name) : (_stampFac.name || '').slice(0, 2).toUpperCase()); }
+            if (typeof _facPaintAvatar === 'function') _facPaintAvatar(avatarEl, _stampEmpId, _stampFac.name);
+            else if (avatarEl) { avatarEl.style.background = '#546e7a'; avatarEl.textContent = (typeof _facInitialsFromName === 'function' ? _facInitialsFromName(_stampFac.name) : (_stampFac.name || '').slice(0, 2).toUpperCase()); }
             if (nameEl)   { nameEl.textContent = _stampFac.name; nameEl.style.color = '#2c3e50'; nameEl.style.fontWeight = '900'; }
             if (typeEl)   { typeEl.style.color = ''; }
             if (chevron)  { chevron.className = 'fas fa-chevron-down fac-stats-chevron'; chevron.style.color = ''; }

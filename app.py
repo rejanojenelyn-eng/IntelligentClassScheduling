@@ -8447,6 +8447,17 @@ _RELEASED_SECTION_SQL = """EXISTS (
 )"""
 
 
+# Same test as _semester_started, as SQL: the semester is active or its start date has
+# passed. Faculty-facing reads that are not scoped to one term (no ay_id/semester) use it
+# so a semester that has not started never leaks in through them.
+_SEM_STARTED_SQL = """EXISTS (
+    SELECT 1 FROM public.semester sem_st
+    WHERE sem_st.semesterid = {sem_col}
+      AND (COALESCE(sem_st.isactive, FALSE)
+           OR (sem_st.semstartdate IS NOT NULL AND sem_st.semstartdate <= CURRENT_DATE))
+)"""
+
+
 def _released_section_ids(cur, semester_id):
     _ensure_faculty_release_table(cur)
     cur.execute("""
@@ -17883,7 +17894,11 @@ def manual_schedule_editor():
         cur.execute("""
             SELECT f.EmployeeNumber,
                    f.LastName || ', ' || f.FirstName || ' ' || COALESCE(f.MiddleName, '') AS fullname,
-                   COALESCE(et.typename, 'Regular') AS typename
+                   COALESCE(et.typename, 'Regular') AS typename,
+                   (SELECT a.profile_photo FROM accounts a
+                     WHERE a.employeenumber = f.EmployeeNumber
+                       AND COALESCE(a.profile_photo, '') <> ''
+                     LIMIT 1) AS photo
             FROM Faculty f
             LEFT JOIN employeetype et ON f.employeetypeid = et.employeetypeid
             WHERE f.EmployeeStatus != 'Archived'
@@ -17910,7 +17925,7 @@ def manual_schedule_editor():
                        "type": r[4],
                        "floor": "1" if "LQ1" in r[1].replace(" ","") else "2" if "LQ2" in r[1].replace(" ","") else "ALL"} for r in raw_rooms]
         
-        faculty_json = json.dumps([{"id": f[0], "name": f[1], "typename": f[2]} for f in faculty])
+        faculty_json = json.dumps([{"id": f[0], "name": f[1], "typename": f[2], "photo": f[3] or None} for f in faculty])
         from database import load_scheduler_config as _load_sched_cfg
         _sched_cfg = _load_sched_cfg()
         lab_constraint_enabled  = bool(_sched_cfg.get('hc_lab_session_enabled', 1))
@@ -21010,6 +21025,12 @@ def get_room_schedule(room_id):
         if scheduler_mode != 'local':
             filters.append(_superseded_published_sql('sv', 's', 'cs'))   # deleted/moved in a Draft
         params  = [room_id]
+        # Faculty: never a semester that has not started (the room calendar is not part
+        # of Faculty Preview). Without this, the faculty Room Schedule — which asks with
+        # no ay_id/semester — showed every published next-semester class in the room.
+        _fac_viewer = session.get('role') == 'Faculty'
+        if _fac_viewer:
+            filters.append(_SEM_STARTED_SQL.format(sem_col='s.semesterid'))
         joins = """ JOIN semester sem ON s.semesterid = sem.semesterid
             LEFT JOIN sections sec ON s.sectionid = sec.sectionid
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
@@ -21084,6 +21105,8 @@ def get_room_schedule(room_id):
             la_filters = ["las.roomid = %s", "la.is_active = TRUE", "la.status = 'Published'"]
             la_params  = [room_id]
             la_joins   = "JOIN semester sem2 ON la.semesterid = sem2.semesterid"
+            if _fac_viewer:
+                la_filters.append(_SEM_STARTED_SQL.format(sem_col='la.semesterid'))
             if not ay_id:
                 la_filters.append("(sem2.semenddate IS NULL OR sem2.semenddate >= (CURRENT_DATE - INTERVAL '12 months'))")
             if ay_id:
@@ -21193,7 +21216,7 @@ def get_room_schedule(room_id):
         # Editor's weekly conflict checks read this endpoint and must not treat a
         # one-day make-up as a weekly booking.
         if request.args.get('include_makeups') == '1':
-            cur.execute("""
+            cur.execute(f"""
                 SELECT UPPER(cs.subjectcode)                      AS subjectcode,
                        cs.subjectname,
                        sc.employeenumber                          AS employee_number,
@@ -21221,6 +21244,7 @@ def get_room_schedule(room_id):
                 WHERE cmr.status = 'Approved'
                   AND cmr.new_roomid = %s
                   AND cmr.requested_date >= (CURRENT_DATE - INTERVAL '12 months')
+                  {("AND " + _SEM_STARTED_SQL.format(sem_col='sc.semesterid')) if _fac_viewer else ""}
                 ORDER BY cmr.requested_date
             """, (room_id,))
             result_rows.extend(dict(m) for m in (cur.fetchall() or []))
@@ -21448,6 +21472,12 @@ def api_get_faculty_schedule():
                     filters.append(_RELEASED_SECTION_SQL.format(sem_col='sc.semesterid', sec_col='sc.sectionid'))
             finally:
                 _pv_cur.close(); _pv_conn.close()
+    elif session.get('role') == 'Faculty':
+        # Not scoped to one term: a semester that has not started shows only its
+        # Faculty Preview-released Schedule List entries (it used to show all of them).
+        _ensure_faculty_release_table()
+        filters.append("(" + _SEM_STARTED_SQL.format(sem_col='sc.semesterid') + " OR "
+                       + _RELEASED_SECTION_SQL.format(sem_col='sc.semesterid', sec_col='sc.sectionid') + ")")
 
     if program:
         filters.append("UPPER(pyl.programcode) = UPPER(%s)")
@@ -21511,6 +21541,8 @@ def api_get_faculty_schedule():
             if emp_num:
                 local_filters.append("las.faculty_employeenumber = %s")
                 local_params.append(emp_num)
+            if session.get('role') == 'Faculty':
+                local_filters.append(_SEM_STARTED_SQL.format(sem_col='la.semesterid'))
             if ay_id and semester:
                 local_filters.append("""la.semesterid = (
                     SELECT semesterid FROM semester
@@ -37018,6 +37050,11 @@ def api_faculty_schedule_full():
     params  = []
     if official_only:
         filters = filters[:1]      # keep sv.status = 'Published'; drop the Local supersession
+    # Faculty: the Class Schedule shows a semester only once it has started (Faculty
+    # Preview releases only the faculty's own subjects, in Teaching Assignment).
+    _fac_viewer = session.get('role') == 'Faculty'
+    if _fac_viewer:
+        filters.append(_SEM_STARTED_SQL.format(sem_col='sc.semesterid'))
 
     if ay_id and semester:
         filters.append("""sc.semesterid = (
@@ -37090,6 +37127,8 @@ def api_faculty_schedule_full():
             return jsonify({'success': True, 'sessions': rows})
         local_filters = ["la.status = 'Published'", "la.is_active = TRUE"]
         local_params = []
+        if _fac_viewer:
+            local_filters.append(_SEM_STARTED_SQL.format(sem_col='la.semesterid'))
         if ay_id and semester:
             local_filters.append("""la.semesterid = (
                 SELECT semesterid FROM semester
