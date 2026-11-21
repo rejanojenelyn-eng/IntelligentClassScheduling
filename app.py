@@ -11885,6 +11885,32 @@ def _room_report_groups(rows):
     return [(b, g[b]) for b in order]
 
 
+def _room_report_periods(groups, sem_label='All Semesters', ay_label=''):
+    """Split Building -> Room groups into one entry per Academic Year + Semester
+    actually present, oldest first: [(sem_label, ay_label, groups), ...]. A weekly
+    room calendar must never stack classes of different terms in one grid (picking
+    several A.Y./semesters used to merge them all). One term -> returned as is."""
+    import re
+    buckets, order = {}, []
+    for _b, rooms in groups:
+        for info in rooms.values():
+            for r in info['rows']:
+                key = (r.get('AY') or '', r.get('Sem') or '')
+                if key not in buckets:
+                    buckets[key] = []
+                    order.append(key)
+                buckets[key].append(r)
+    if len(order) <= 1:
+        return [(sem_label, ay_label, groups)]
+
+    def _ay_start(ay):
+        m = re.match(r'^(\d+)', ay or '')
+        return int(m.group(1)) if m else 0
+    order.sort(key=lambda k: (_ay_start(k[0]), _SCH_SEM_ORDER.get(k[1], 99)))
+    return [(_ROOM_RPT_SEM_LABEL.get(sem, sem or 'All Semesters'), ay, _room_report_groups(buckets[(ay, sem)]))
+            for ay, sem in order]
+
+
 def _room_official_row(r):
     """One data row in Reports > Room Schedule column order: Day...Semester."""
     return [
@@ -11936,45 +11962,49 @@ def _room_report_gen_xlsx(groups, sem_label='All Semesters', ay_label=''):
     NCOLS = len(_ROOM_RPT_HEADERS)
     COL_W = [10, 20, 13, 42, 10, 6, 22, 12, 13]
 
-    title = _room_official_title(sem_label, ay_label)
     rn = 1
-    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-    c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
-    ws.row_dimensions[rn].height = 20; rn += 1
-
-    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-    c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = campus_font; c.fill = MAROON
-    c.alignment = Alignment(horizontal='center')
-    ws.row_dimensions[rn].height = 18; rn += 1
-    rn += 1
-
-    for bname, rooms in groups:
+    # One section per Academic Year + Semester (own title) — never several terms merged.
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        if _pi:
+            rn += 1
+        title = _room_official_title(p_sem, p_ay)
         ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-        c = ws.cell(rn, 1, f'BUILDING: {bname.upper()}')
-        c.font = bldg_font; c.alignment = Alignment(horizontal='center')
-        for col in range(1, NCOLS + 1):
-            ws.cell(rn, col).border = brd; ws.cell(rn, col).fill = GRAY
+        c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
         ws.row_dimensions[rn].height = 20; rn += 1
 
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            c = ws.cell(rn, 1, f'Room: {rname}{type_sfx}')
-            c.font = room_font
-            ws.row_dimensions[rn].height = 16; rn += 1
-
-            for ci, h in enumerate(_ROOM_RPT_HEADERS, 1):
-                c = ws.cell(rn, ci, h); c.font = hdr_font; c.border = brd; c.alignment = center
-            ws.row_dimensions[rn].height = 22; rn += 1
-
-            for r in info['rows']:
-                vals = _room_official_row(r)
-                for ci, v in enumerate(vals, 1):
-                    c = ws.cell(rn, ci, v); c.border = brd; c.font = data_font
-                    c.alignment = center if (ci - 1) in _ROOM_RPT_CENTER_COLS else Alignment(
-                        vertical='center', horizontal='left', wrap_text=True)
-                ws.row_dimensions[rn].height = 15; rn += 1
-            rn += 1
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = campus_font; c.fill = MAROON
+        c.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[rn].height = 18; rn += 1
         rn += 1
+
+        for bname, rooms in p_groups:
+            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+            c = ws.cell(rn, 1, f'BUILDING: {bname.upper()}')
+            c.font = bldg_font; c.alignment = Alignment(horizontal='center')
+            for col in range(1, NCOLS + 1):
+                ws.cell(rn, col).border = brd; ws.cell(rn, col).fill = GRAY
+            ws.row_dimensions[rn].height = 20; rn += 1
+
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                c = ws.cell(rn, 1, f'Room: {rname}{type_sfx}')
+                c.font = room_font
+                ws.row_dimensions[rn].height = 16; rn += 1
+
+                for ci, h in enumerate(_ROOM_RPT_HEADERS, 1):
+                    c = ws.cell(rn, ci, h); c.font = hdr_font; c.border = brd; c.alignment = center
+                ws.row_dimensions[rn].height = 22; rn += 1
+
+                for r in info['rows']:
+                    vals = _room_official_row(r)
+                    for ci, v in enumerate(vals, 1):
+                        c = ws.cell(rn, ci, v); c.border = brd; c.font = data_font
+                        c.alignment = center if (ci - 1) in _ROOM_RPT_CENTER_COLS else Alignment(
+                            vertical='center', horizontal='left', wrap_text=True)
+                    ws.row_dimensions[rn].height = 15; rn += 1
+                rn += 1
+            rn += 1
 
     for i, w in enumerate(COL_W, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
@@ -12009,7 +12039,6 @@ def _room_report_gen_docx(groups, sem_label='All Semesters', ay_label=''):
     sec.top_margin  = sec.bottom_margin = Cm(1.0)
 
     BLACK = RGBColor(0x00, 0x00, 0x00)
-    title = _room_official_title(sem_label, ay_label)
     COL_W = [Cm(w) for w in _ROOM_RPT_COL_CM]
 
     def _bg(cell, hex6):
@@ -12037,57 +12066,62 @@ def _room_report_gen_docx(groups, sem_label='All Semesters', ay_label=''):
             for row in tbl.rows:
                 row.cells[ci].width = w
 
-    h1 = doc.add_heading(title, 0)
-    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in h1.runs:
-        run.font.color.rgb = BLACK; run.font.size = Pt(14)
+    # One section per Academic Year + Semester (own title) — never several terms merged.
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        if _pi:
+            doc.add_page_break()
+        title = _room_official_title(p_sem, p_ay)
+        h1 = doc.add_heading(title, 0)
+        h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in h1.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(14)
 
-    camp = doc.add_table(rows=1, cols=1)
-    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
-    _cell_text(camp.rows[0].cells[0], 'LOPEZ, QUEZON CAMPUS', bold=True, sz=11,
-               fill='7A0100', align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0xFF, 0xFF, 0xFF))
-    doc.add_paragraph()
+        camp = doc.add_table(rows=1, cols=1)
+        camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _cell_text(camp.rows[0].cells[0], 'LOPEZ, QUEZON CAMPUS', bold=True, sz=11,
+                   fill='7A0100', align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0xFF, 0xFF, 0xFF))
+        doc.add_paragraph()
 
-    # No forced page break per building — some buildings have only a room or
-    # two, and hard-breaking before every one of them regardless of content
-    # is what leaves a report full of nearly-blank pages (the same issue
-    # fixed for the Class Schedule report's per-program breaks).
-    first_bldg = True
-    for bname, rooms in groups:
-        if not first_bldg:
-            doc.add_paragraph()
-        first_bldg = False
+        # No forced page break per building — some buildings have only a room or
+        # two, and hard-breaking before every one of them regardless of content
+        # is what leaves a report full of nearly-blank pages (the same issue
+        # fixed for the Class Schedule report's per-program breaks).
+        first_bldg = True
+        for bname, rooms in p_groups:
+            if not first_bldg:
+                doc.add_paragraph()
+            first_bldg = False
 
-        bldg_tbl = doc.add_table(rows=1, cols=1)
-        bldg_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _cell_text(bldg_tbl.rows[0].cells[0], f'BUILDING: {bname.upper()}', bold=True, sz=12,
-                   fill='E4E4E4', align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x22, 0x22, 0x22))
-        bldg_tbl.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next = True
+            bldg_tbl = doc.add_table(rows=1, cols=1)
+            bldg_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+            _cell_text(bldg_tbl.rows[0].cells[0], f'BUILDING: {bname.upper()}', bold=True, sz=12,
+                       fill='E4E4E4', align=WD_ALIGN_PARAGRAPH.CENTER, color=RGBColor(0x22, 0x22, 0x22))
+            bldg_tbl.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next = True
 
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            p_room = doc.add_paragraph()
-            p_room.paragraph_format.keep_with_next = True
-            run_room = p_room.add_run(f'Room: {rname}{type_sfx}')
-            run_room.font.bold = True; run_room.font.italic = True; run_room.font.size = Pt(10)
-            run_room.font.color.rgb = BLACK
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                p_room = doc.add_paragraph()
+                p_room.paragraph_format.keep_with_next = True
+                run_room = p_room.add_run(f'Room: {rname}{type_sfx}')
+                run_room.font.bold = True; run_room.font.italic = True; run_room.font.size = Pt(10)
+                run_room.font.color.rgb = BLACK
 
-            room_rows = info['rows']
-            tbl = doc.add_table(rows=1 + len(room_rows), cols=len(_ROOM_RPT_HEADERS))
-            tbl.style = 'Table Grid'
-            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-            _set_col_widths(tbl)
+                room_rows = info['rows']
+                tbl = doc.add_table(rows=1 + len(room_rows), cols=len(_ROOM_RPT_HEADERS))
+                tbl.style = 'Table Grid'
+                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                _set_col_widths(tbl)
 
-            for ci, h_txt in enumerate(_ROOM_RPT_HEADERS):
-                _cell_text(tbl.rows[0].cells[ci], h_txt, bold=True, sz=7, align=WD_ALIGN_PARAGRAPH.CENTER)
+                for ci, h_txt in enumerate(_ROOM_RPT_HEADERS):
+                    _cell_text(tbl.rows[0].cells[ci], h_txt, bold=True, sz=7, align=WD_ALIGN_PARAGRAPH.CENTER)
 
-            for ri, r in enumerate(room_rows):
-                vals = _room_official_row(r)
-                for ci, v in enumerate(vals):
-                    align = WD_ALIGN_PARAGRAPH.CENTER if ci in _ROOM_RPT_CENTER_COLS else WD_ALIGN_PARAGRAPH.LEFT
-                    _cell_text(tbl.rows[ri + 1].cells[ci], v, sz=7, align=align)
+                for ri, r in enumerate(room_rows):
+                    vals = _room_official_row(r)
+                    for ci, v in enumerate(vals):
+                        align = WD_ALIGN_PARAGRAPH.CENTER if ci in _ROOM_RPT_CENTER_COLS else WD_ALIGN_PARAGRAPH.LEFT
+                        _cell_text(tbl.rows[ri + 1].cells[ci], v, sz=7, align=align)
 
-            doc.add_paragraph()
+                doc.add_paragraph()
 
     buf = io.BytesIO()
     _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
@@ -12131,55 +12165,102 @@ def _room_report_gen_pdf(groups, sem_label='All Semesters', ay_label=''):
         return Paragraph(text, cell_c if center else cell_l)
 
     COL_W = [w*cm for w in _ROOM_RPT_COL_CM]
-    title = _room_official_title(sem_label, ay_label)
+    # One section per Academic Year + Semester (own title) — never several terms merged.
+    story = []
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        if _pi:
+            story.append(PageBreak())
+        title = _room_official_title(p_sem, p_ay)
 
-    story = [Paragraph(title, h1)]
-    camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[sum(COL_W)])
-    camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
-    story.append(camp_tbl)
-    story.append(Spacer(1, 0.3*cm))
-
-    # No forced page break per building — some buildings have only a room or
-    # two, and hard-breaking before every one of them regardless of content
-    # is what leaves a report full of nearly-blank pages (the same issue
-    # fixed for the Class Schedule report's per-program breaks).
-    first_bldg = True
-    for bname, rooms in groups:
-        if not first_bldg:
-            story.append(Spacer(1, 0.4*cm))
-        first_bldg = False
-
-        bldg_tbl = Table([[Paragraph(f'BUILDING: {bname.upper()}', bldg_style)]], colWidths=[sum(COL_W)])
-        bldg_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), GRAY), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
-        story.append(bldg_tbl)
-        story.append(Spacer(1, 0.15*cm))
-
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            room_flow = [Paragraph(f'Room: {rname}{type_sfx}', h3)]
-
-            tbl_data = [[Paragraph(_xml_escape(h), hdr_c) for h in _ROOM_RPT_HEADERS]]
-            for r in info['rows']:
-                vals = _room_official_row(r)
-                tbl_data.append([_pc(v, ci in _ROOM_RPT_CENTER_COLS) for ci, v in enumerate(vals)])
-
-            tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
-            tbl.setStyle(TableStyle([
-                ('VALIGN',         (0,0),  (-1,-1), 'MIDDLE'),
-                ('GRID',           (0,0),  (-1,-1), 0.5, BLACK),
-                ('LEFTPADDING',    (0,0),  (-1,-1), 2),
-                ('RIGHTPADDING',   (0,0),  (-1,-1), 2),
-                ('TOPPADDING',     (0,0),  (-1,-1), 2),
-                ('BOTTOMPADDING',  (0,0),  (-1,-1), 2),
-            ]))
-            room_flow.append(tbl)
-            story.append(KeepTogether(room_flow))
-            story.append(Spacer(1, 0.25*cm))
+        story.append(Paragraph(title, h1))
+        camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[sum(COL_W)])
+        camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+        story.append(camp_tbl)
         story.append(Spacer(1, 0.3*cm))
+
+        # No forced page break per building — some buildings have only a room or
+        # two, and hard-breaking before every one of them regardless of content
+        # is what leaves a report full of nearly-blank pages (the same issue
+        # fixed for the Class Schedule report's per-program breaks).
+        first_bldg = True
+        for bname, rooms in p_groups:
+            if not first_bldg:
+                story.append(Spacer(1, 0.4*cm))
+            first_bldg = False
+
+            bldg_tbl = Table([[Paragraph(f'BUILDING: {bname.upper()}', bldg_style)]], colWidths=[sum(COL_W)])
+            bldg_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), GRAY), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+            story.append(bldg_tbl)
+            story.append(Spacer(1, 0.15*cm))
+
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                room_flow = [Paragraph(f'Room: {rname}{type_sfx}', h3)]
+
+                tbl_data = [[Paragraph(_xml_escape(h), hdr_c) for h in _ROOM_RPT_HEADERS]]
+                for r in info['rows']:
+                    vals = _room_official_row(r)
+                    tbl_data.append([_pc(v, ci in _ROOM_RPT_CENTER_COLS) for ci, v in enumerate(vals)])
+
+                tbl = Table(tbl_data, colWidths=COL_W, repeatRows=1)
+                tbl.setStyle(TableStyle([
+                    ('VALIGN',         (0,0),  (-1,-1), 'MIDDLE'),
+                    ('GRID',           (0,0),  (-1,-1), 0.5, BLACK),
+                    ('LEFTPADDING',    (0,0),  (-1,-1), 2),
+                    ('RIGHTPADDING',   (0,0),  (-1,-1), 2),
+                    ('TOPPADDING',     (0,0),  (-1,-1), 2),
+                    ('BOTTOMPADDING',  (0,0),  (-1,-1), 2),
+                ]))
+                room_flow.append(tbl)
+                story.append(KeepTogether(room_flow))
+                story.append(Spacer(1, 0.25*cm))
+            story.append(Spacer(1, 0.3*cm))
 
     doc.build(story)
     buf.seek(0)
     return buf.read()
+
+
+# Class "card" colours of the report preview's calendar (.cal-class-cell in
+# templates/academic/reports_preview.html), reused by the downloaded files.
+_CAL_CARD_FILL = 'FFF0F0'
+_CAL_CARD_EDGE = 'A31515'
+_CAL_CARD_TEXT = '2C0000'
+
+# Schema order of <w:tcPr> children — Word rejects a file whose elements are out of order.
+_TCPR_ORDER = ['cnfStyle', 'tcW', 'gridSpan', 'hMerge', 'vMerge', 'tcBorders', 'shd',
+               'noWrap', 'tcMar', 'textDirection', 'tcFitText', 'vAlign', 'hideMark']
+
+
+def _docx_tcpr_set(tcPr, el):
+    """Put `el` into <w:tcPr> at its schema position, replacing one of the same tag."""
+    from docx.oxml.ns import qn
+    name = el.tag.split('}')[1]
+    for old in tcPr.findall(qn('w:' + name)):
+        tcPr.remove(old)
+    later = set(_TCPR_ORDER[_TCPR_ORDER.index(name) + 1:])
+    for i, child in enumerate(list(tcPr)):
+        if child.tag.split('}')[1] in later:
+            tcPr.insert(i, el)
+            return
+    tcPr.append(el)
+
+
+def _docx_card_cell(cell, left_edge=False):
+    """Pink card fill (+ the red left edge on the card's first column)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tcPr = cell._tc.get_or_add_tcPr()
+    if left_edge:
+        borders = OxmlElement('w:tcBorders')
+        left = OxmlElement('w:left')
+        left.set(qn('w:val'), 'single'); left.set(qn('w:sz'), '18')    # 2.25 pt
+        left.set(qn('w:space'), '0');    left.set(qn('w:color'), _CAL_CARD_EDGE)
+        borders.append(left)
+        _docx_tcpr_set(tcPr, borders)
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear'); shd.set(qn('w:color'), 'auto'); shd.set(qn('w:fill'), _CAL_CARD_FILL)
+    _docx_tcpr_set(tcPr, shd)
 
 
 def _room_report_gen_xlsx_calendar(groups, sem_label='All Semesters', ay_label=''):
@@ -12209,6 +12290,9 @@ def _room_report_gen_xlsx_calendar(groups, sem_label='All Semesters', ay_label='
     room_font   = Font(bold=True, size=9, italic=True)
     hdr_font    = Font(bold=True, size=8.5)
     data_font   = Font(size=6.5)
+    card_font   = Font(size=6.5, bold=True, color=_CAL_CARD_TEXT)
+    card_fill   = PatternFill('solid', fgColor=_CAL_CARD_FILL)
+    card_edge   = Side(style='thick', color=_CAL_CARD_EDGE)
     center      = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
     NCOLS = _SCH_CAL_NCOLS
@@ -12216,76 +12300,87 @@ def _room_report_gen_xlsx_calendar(groups, sem_label='All Semesters', ay_label='
     ROW_H_NORMAL = 20
     ROW_H_GAP    = 5
 
-    title = _room_official_title(sem_label, ay_label)
     rn = 1
-    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-    c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
-    ws.row_dimensions[rn].height = 16; rn += 1
-
-    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-    c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = campus_font; c.fill = MAROON
-    c.alignment = Alignment(horizontal='center')
-    ws.row_dimensions[rn].height = 14; rn += 1
-
-    for bname, rooms in groups:
-        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-        c = ws.cell(rn, 1, f'BUILDING: {bname.upper()}')
-        c.font = bldg_font; c.alignment = Alignment(horizontal='center')
-        for col in range(1, NCOLS + 1):
-            ws.cell(rn, col).border = brd; ws.cell(rn, col).fill = GRAY
-        ws.row_dimensions[rn].height = 18; rn += 1
-
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            c = ws.cell(rn, 1, f'Room: {rname}{type_sfx}'); c.font = room_font
-            ws.row_dimensions[rn].height = 15; rn += 1
-
-            blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
-
-            hdr_row = rn
-            c = ws.cell(hdr_row, 1, 'TIME'); c.font = hdr_font; c.border = brd; c.alignment = center
-            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
-                base = _SCH_CAL_COL_BASE[pi]
-                for si, d in enumerate(members):
-                    c = ws.cell(hdr_row, base + 1 + si, _SCH_CAL_SUBLBL[d])
-                    c.font = hdr_font; c.border = brd; c.alignment = center
-            sun_col = _SCH_CAL_COL_BASE[3] + 1
-            c = ws.cell(hdr_row, sun_col, 'SUN'); c.font = hdr_font; c.border = brd; c.alignment = center
-            ws.row_dimensions[hdr_row].height = 14
-
-            data_start = hdr_row + 1
-            for fi, (fs, fe, flbl, is_gap) in enumerate(_SCH_CAL_FINE_ROWS):
-                excel_row = data_start + fi
-                ws.row_dimensions[excel_row].height = ROW_H_GAP if is_gap else ROW_H_NORMAL
-                for col in range(1, NCOLS + 1):
-                    ws.cell(excel_row, col).border = brd
-
-            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
-                r0, r1 = _sch_cal_row_range(s_start, s_end)
-                er0, er1 = data_start + r0, data_start + r1
-                if er1 > er0:
-                    ws.merge_cells(start_row=er0, start_column=1, end_row=er1, end_column=1)
-                c = ws.cell(er0, 1, s_label); c.font = hdr_font; c.alignment = center
-
-            for b in blocks:
-                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
-                er0, er1 = data_start + b['row_start'], data_start + b['row_end']
-                ec0, ec1 = col0 + 1, col1 + 1
-                if er1 > er0 or ec1 > ec0:
-                    ws.merge_cells(start_row=er0, start_column=ec0, end_row=er1, end_column=ec1)
-                c = ws.cell(er0, ec0, '\n\n'.join(b['lines'])); c.font = data_font; c.alignment = center
-
-            rn = data_start + len(_SCH_CAL_FINE_ROWS)
-
-            if unscheduled:
-                c = ws.cell(rn, 1, 'Unscheduled / TBA:'); c.font = hdr_font; rn += 1
-                for u in unscheduled:
-                    ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
-                    c = ws.cell(rn, 1, u); c.font = data_font
-                    rn += 1
-
+    # One section per Academic Year + Semester (own title) — never several terms in one grid.
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        if _pi:
             rn += 1
-        rn += 1
+        title = _room_official_title(p_sem, p_ay)
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, title); c.font = title_font; c.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[rn].height = 16; rn += 1
+
+        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+        c = ws.cell(rn, 1, 'LOPEZ, QUEZON CAMPUS'); c.font = campus_font; c.fill = MAROON
+        c.alignment = Alignment(horizontal='center')
+        ws.row_dimensions[rn].height = 14; rn += 1
+
+        for bname, rooms in p_groups:
+            ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+            c = ws.cell(rn, 1, f'BUILDING: {bname.upper()}')
+            c.font = bldg_font; c.alignment = Alignment(horizontal='center')
+            for col in range(1, NCOLS + 1):
+                ws.cell(rn, col).border = brd; ws.cell(rn, col).fill = GRAY
+            ws.row_dimensions[rn].height = 18; rn += 1
+
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                c = ws.cell(rn, 1, f'Room: {rname}{type_sfx}'); c.font = room_font
+                ws.row_dimensions[rn].height = 15; rn += 1
+
+                blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
+
+                hdr_row = rn
+                c = ws.cell(hdr_row, 1, 'TIME'); c.font = hdr_font; c.border = brd; c.alignment = center
+                for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                    base = _SCH_CAL_COL_BASE[pi]
+                    for si, d in enumerate(members):
+                        c = ws.cell(hdr_row, base + 1 + si, _SCH_CAL_SUBLBL[d])
+                        c.font = hdr_font; c.border = brd; c.alignment = center
+                sun_col = _SCH_CAL_COL_BASE[3] + 1
+                c = ws.cell(hdr_row, sun_col, 'SUN'); c.font = hdr_font; c.border = brd; c.alignment = center
+                ws.row_dimensions[hdr_row].height = 14
+
+                data_start = hdr_row + 1
+                for fi, (fs, fe, flbl, is_gap) in enumerate(_SCH_CAL_FINE_ROWS):
+                    excel_row = data_start + fi
+                    ws.row_dimensions[excel_row].height = ROW_H_GAP if is_gap else ROW_H_NORMAL
+                    for col in range(1, NCOLS + 1):
+                        ws.cell(excel_row, col).border = brd
+
+                for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                    r0, r1 = _sch_cal_row_range(s_start, s_end)
+                    er0, er1 = data_start + r0, data_start + r1
+                    if er1 > er0:
+                        ws.merge_cells(start_row=er0, start_column=1, end_row=er1, end_column=1)
+                    c = ws.cell(er0, 1, s_label); c.font = hdr_font; c.alignment = center
+
+                for b in blocks:
+                    col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                    er0, er1 = data_start + b['row_start'], data_start + b['row_end']
+                    ec0, ec1 = col0 + 1, col1 + 1
+                    # Card look of the on-screen preview: pink fill, red left edge.
+                    for xr in range(er0, er1 + 1):
+                        for xc in range(ec0, ec1 + 1):
+                            cc = ws.cell(xr, xc)
+                            cc.fill = card_fill
+                            if xc == ec0:
+                                cc.border = Border(left=card_edge, right=thin, top=thin, bottom=thin)
+                    if er1 > er0 or ec1 > ec0:
+                        ws.merge_cells(start_row=er0, start_column=ec0, end_row=er1, end_column=ec1)
+                    c = ws.cell(er0, ec0, '\n\n'.join(b['lines'])); c.font = card_font; c.alignment = center
+
+                rn = data_start + len(_SCH_CAL_FINE_ROWS)
+
+                if unscheduled:
+                    c = ws.cell(rn, 1, 'Unscheduled / TBA:'); c.font = hdr_font; rn += 1
+                    for u in unscheduled:
+                        ws.merge_cells(start_row=rn, start_column=1, end_row=rn, end_column=NCOLS)
+                        c = ws.cell(rn, 1, u); c.font = data_font
+                        rn += 1
+
+                rn += 1
+            rn += 1
 
     for i, w in enumerate(COL_W, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
@@ -12348,90 +12443,102 @@ def _room_report_gen_docx_calendar(groups, sem_label='All Semesters', ay_label='
         row.height = Pt(pts)
         row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY if exact else WD_ROW_HEIGHT_RULE.AT_LEAST
 
-    title = _room_official_title(sem_label, ay_label)
-    h1 = doc.add_heading(title, 0)
-    h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    h1.paragraph_format.space_after = Pt(2)
-    for run in h1.runs:
-        run.font.color.rgb = BLACK; run.font.size = Pt(12)
+    # One section per Academic Year + Semester (own title) — never several terms in one grid.
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        if _pi:
+            doc.add_page_break()
+        title = _room_official_title(p_sem, p_ay)
+        h1 = doc.add_heading(title, 0)
+        h1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        h1.paragraph_format.space_after = Pt(2)
+        for run in h1.runs:
+            run.font.color.rgb = BLACK; run.font.size = Pt(12)
 
-    camp = doc.add_table(rows=1, cols=1)
-    camp.alignment = WD_TABLE_ALIGNMENT.CENTER
-    _cell_lines(camp.rows[0].cells[0], ['LOPEZ, QUEZON CAMPUS'], bold=True, sz=9,
-                fill='7A0100', color=RGBColor(0xFF, 0xFF, 0xFF))
+        camp = doc.add_table(rows=1, cols=1)
+        camp.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _cell_lines(camp.rows[0].cells[0], ['LOPEZ, QUEZON CAMPUS'], bold=True, sz=9,
+                    fill='7A0100', color=RGBColor(0xFF, 0xFF, 0xFF))
 
-    # No forced page break per building/room — see the Table layout generator
-    # above for why (many nearly-blank pages otherwise).
-    first_bldg = True
-    for bname, rooms in groups:
-        if not first_bldg:
-            doc.add_paragraph()
-        first_bldg = False
+        # No forced page break per building/room — see the Table layout generator
+        # above for why (many nearly-blank pages otherwise).
+        first_bldg = True
+        for bname, rooms in p_groups:
+            if not first_bldg:
+                doc.add_paragraph()
+            first_bldg = False
 
-        bldg_tbl = doc.add_table(rows=1, cols=1)
-        bldg_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        _cell_lines(bldg_tbl.rows[0].cells[0], [f'BUILDING: {bname.upper()}'], bold=True, sz=11,
-                    fill='E4E4E4', color=RGBColor(0x22, 0x22, 0x22))
-        bldg_tbl.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next = True
+            bldg_tbl = doc.add_table(rows=1, cols=1)
+            bldg_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+            _cell_lines(bldg_tbl.rows[0].cells[0], [f'BUILDING: {bname.upper()}'], bold=True, sz=11,
+                        fill='E4E4E4', color=RGBColor(0x22, 0x22, 0x22))
+            bldg_tbl.rows[0].cells[0].paragraphs[0].paragraph_format.keep_with_next = True
 
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            p_room = doc.add_paragraph()
-            p_room.paragraph_format.keep_with_next = True
-            run_room = p_room.add_run(f'Room: {rname}{type_sfx}')
-            run_room.font.bold = True; run_room.font.italic = True; run_room.font.size = Pt(10)
-            run_room.font.color.rgb = BLACK
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                p_room = doc.add_paragraph()
+                p_room.paragraph_format.keep_with_next = True
+                run_room = p_room.add_run(f'Room: {rname}{type_sfx}')
+                run_room.font.bold = True; run_room.font.italic = True; run_room.font.size = Pt(10)
+                run_room.font.color.rgb = BLACK
 
-            blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
-            n_fine = len(_SCH_CAL_FINE_ROWS)
+                blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
+                n_fine = len(_SCH_CAL_FINE_ROWS)
 
-            tbl = doc.add_table(rows=1 + n_fine, cols=_SCH_CAL_NCOLS)
-            tbl.style = 'Table Grid'
-            tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-            tbl.autofit = False
-            widths_in = [0.9, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92]
-            for row in tbl.rows:
-                row_cells = row.cells
-                for ci, w in enumerate(widths_in):
-                    row_cells[ci].width = Inches(w)
+                tbl = doc.add_table(rows=1 + n_fine, cols=_SCH_CAL_NCOLS)
+                tbl.style = 'Table Grid'
+                tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+                tbl.autofit = False
+                widths_in = [0.9, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92]
+                for row in tbl.rows:
+                    row_cells = row.cells
+                    for ci, w in enumerate(widths_in):
+                        row_cells[ci].width = Inches(w)
 
-            hdr_row_cells = tbl.rows[0].cells
-            _cell_lines(hdr_row_cells[0], ['TIME'], bold=True, sz=7.5)
-            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
-                base = _SCH_CAL_COL_BASE[pi]
-                for si, d in enumerate(members):
-                    _cell_lines(hdr_row_cells[base + si], [_SCH_CAL_SUBLBL[d]], bold=True, sz=7)
-            sun_col = _SCH_CAL_COL_BASE[3]
-            _cell_lines(hdr_row_cells[sun_col], ['SUN'], bold=True, sz=7.5)
-            _set_row_height(tbl.rows[0], 9)
+                hdr_row_cells = tbl.rows[0].cells
+                _cell_lines(hdr_row_cells[0], ['TIME'], bold=True, sz=7.5)
+                for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                    base = _SCH_CAL_COL_BASE[pi]
+                    for si, d in enumerate(members):
+                        _cell_lines(hdr_row_cells[base + si], [_SCH_CAL_SUBLBL[d]], bold=True, sz=7)
+                sun_col = _SCH_CAL_COL_BASE[3]
+                _cell_lines(hdr_row_cells[sun_col], ['SUN'], bold=True, sz=7.5)
+                _set_row_height(tbl.rows[0], 9)
 
-            for fi in range(n_fine):
-                _set_row_height(tbl.rows[1 + fi], 4 if _SCH_CAL_FINE_ROWS[fi][3] else 13)
-                fine_row_cells = tbl.rows[1 + fi].cells
-                for ci in range(_SCH_CAL_NCOLS):
-                    _cell_lines(fine_row_cells[ci], [''], sz=6.5)
+                for fi in range(n_fine):
+                    _set_row_height(tbl.rows[1 + fi], 4 if _SCH_CAL_FINE_ROWS[fi][3] else 13)
+                    fine_row_cells = tbl.rows[1 + fi].cells
+                    for ci in range(_SCH_CAL_NCOLS):
+                        _cell_lines(fine_row_cells[ci], [''], sz=6.5)
 
-            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
-                r0, r1 = _sch_cal_row_range(s_start, s_end)
-                cell = tbl.rows[1 + r0].cells[0]
-                if r1 > r0:
-                    cell = cell.merge(tbl.rows[1 + r1].cells[0])
-                _cell_lines(cell, [s_label], bold=True, sz=7)
+                for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                    r0, r1 = _sch_cal_row_range(s_start, s_end)
+                    cell = tbl.rows[1 + r0].cells[0]
+                    if r1 > r0:
+                        cell = cell.merge(tbl.rows[1 + r1].cells[0])
+                    _cell_lines(cell, [s_label], bold=True, sz=7)
 
-            for b in blocks:
-                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
-                cell = tbl.rows[1 + b['row_start']].cells[col0]
-                if b['row_end'] > b['row_start'] or col1 > col0:
-                    cell = cell.merge(tbl.rows[1 + b['row_end']].cells[col1])
-                _cell_lines(cell, b['lines'], sz=6.5)
+                for b in blocks:
+                    col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                    # Card look of the on-screen preview (.cal-class-cell): pink fill,
+                    # red left edge. Set on every underlying cell BEFORE merging, since
+                    # a vertically merged Word cell keeps one <w:tc> per row.
+                    for ri in range(b['row_start'], b['row_end'] + 1):
+                        rc = tbl.rows[1 + ri].cells
+                        for ci in range(col0, col1 + 1):
+                            _docx_card_cell(rc[ci], left_edge=(ci == col0))
+                    cell = tbl.rows[1 + b['row_start']].cells[col0]
+                    if b['row_end'] > b['row_start'] or col1 > col0:
+                        cell = cell.merge(tbl.rows[1 + b['row_end']].cells[col1])
+                    _cell_lines(cell, b['lines'], sz=6.5, bold=True,
+                                color=RGBColor.from_string(_CAL_CARD_TEXT))
 
-            if unscheduled:
-                p = doc.add_paragraph()
-                p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
-                run = p.add_run('Unscheduled / TBA: ' + '; '.join(unscheduled))
-                run.font.size = Pt(7); run.font.color.rgb = BLACK
+                if unscheduled:
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_before = Pt(1); p.paragraph_format.space_after = Pt(1)
+                    run = p.add_run('Unscheduled / TBA: ' + '; '.join(unscheduled))
+                    run.font.size = Pt(7); run.font.color.rgb = BLACK
 
-            doc.add_paragraph()
+                doc.add_paragraph()
 
     buf = io.BytesIO()
     _docx_apply_orientation(doc); doc.save(buf); buf.seek(0)
@@ -12469,6 +12576,10 @@ def _room_report_gen_pdf_calendar(groups, sem_label='All Semesters', ay_label=''
     hdr_style  = ParagraphStyle('RCHdr', parent=styles['Normal'], textColor=BLACK, fontSize=7, alignment=TA_CENTER,
                                  fontName='Helvetica-Bold', leading=8)
     cell_style = ParagraphStyle('RCCell', parent=styles['Normal'], textColor=BLACK, fontSize=5.8, alignment=TA_CENTER, leading=6.8)
+    card_style = ParagraphStyle('RCCard', parent=cell_style, textColor=colors.HexColor('#' + _CAL_CARD_TEXT),
+                                fontName='Helvetica-Bold')
+    CARD_FILL  = colors.HexColor('#' + _CAL_CARD_FILL)
+    CARD_EDGE  = colors.HexColor('#' + _CAL_CARD_EDGE)
     time_style = ParagraphStyle('RCTime', parent=styles['Normal'], textColor=BLACK, fontSize=6.5, alignment=TA_CENTER,
                                  fontName='Helvetica-Bold', leading=7.5)
     note_style = ParagraphStyle('RCNote', parent=styles['Normal'], textColor=BLACK, fontSize=7.5, alignment=TA_LEFT)
@@ -12482,77 +12593,89 @@ def _room_report_gen_pdf_calendar(groups, sem_label='All Semesters', ay_label=''
     ROW_H_GAP    = 0.12 * cm
     HDR_H        = 0.38 * cm
 
-    title = _room_official_title(sem_label, ay_label)
-    story = [Paragraph(title, h1)]
-    camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[TOTAL_W])
-    camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
-    story.append(camp_tbl)
-    story.append(Spacer(1, 0.15*cm))
+    # One section per Academic Year + Semester (own title) — never several terms in one grid.
+    story = []
+    for _pi, (p_sem, p_ay, p_groups) in enumerate(_room_report_periods(groups, sem_label, ay_label)):
+        title = _room_official_title(p_sem, p_ay)
+        if _pi:
+            story.append(PageBreak())
+        story.append(Paragraph(title, h1))
+        camp_tbl = Table([[Paragraph('LOPEZ, QUEZON CAMPUS', campus_style)]], colWidths=[TOTAL_W])
+        camp_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), MAROON), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+        story.append(camp_tbl)
+        story.append(Spacer(1, 0.15*cm))
 
-    first_bldg = True
-    for bname, rooms in groups:
-        if not first_bldg:
-            story.append(Spacer(1, 0.3*cm))
-        first_bldg = False
+        first_bldg = True
+        for bname, rooms in p_groups:
+            if not first_bldg:
+                story.append(Spacer(1, 0.3*cm))
+            first_bldg = False
 
-        bldg_tbl = Table([[Paragraph(f'BUILDING: {bname.upper()}', bldg_style)]], colWidths=[TOTAL_W])
-        bldg_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), GRAY), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
-        story.append(bldg_tbl)
-        story.append(Spacer(1, 0.1*cm))
+            bldg_tbl = Table([[Paragraph(f'BUILDING: {bname.upper()}', bldg_style)]], colWidths=[TOTAL_W])
+            bldg_tbl.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), GRAY), ('BOX', (0, 0), (-1, -1), 0.5, BLACK)]))
+            story.append(bldg_tbl)
+            story.append(Spacer(1, 0.1*cm))
 
-        for rname, info in rooms.items():
-            type_sfx = f' — {info["type"]}' if info['type'] else ''
-            room_flow = [Paragraph(f'Room: {rname}{type_sfx}', h3)]
+            for rname, info in rooms.items():
+                type_sfx = f' — {info["type"]}' if info['type'] else ''
+                room_flow = [Paragraph(f'Room: {rname}{type_sfx}', h3)]
 
-            blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
-            n_fine = len(_SCH_CAL_FINE_ROWS)
+                blocks, unscheduled = _sch_build_calendar(info['rows'], text_fn=_room_cal_block_text)
+                n_fine = len(_SCH_CAL_FINE_ROWS)
 
-            grid = [[Paragraph('', cell_style) for _ in range(NCOLS)] for _ in range(1 + n_fine)]
-            span_cmds = []
+                grid = [[Paragraph('', cell_style) for _ in range(NCOLS)] for _ in range(1 + n_fine)]
+                span_cmds = []
 
-            grid[0][0] = Paragraph('TIME', hdr_style)
-            for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
-                base = _SCH_CAL_COL_BASE[pi]
-                for si, d in enumerate(members):
-                    grid[0][base + si] = Paragraph(_SCH_CAL_SUBLBL[d], hdr_style)
-            sun_col = _SCH_CAL_COL_BASE[3]
-            grid[0][sun_col] = Paragraph('SUN', hdr_style)
+                grid[0][0] = Paragraph('TIME', hdr_style)
+                for pi, (lbl, members) in enumerate(_SCH_CAL_COLS[:3]):
+                    base = _SCH_CAL_COL_BASE[pi]
+                    for si, d in enumerate(members):
+                        grid[0][base + si] = Paragraph(_SCH_CAL_SUBLBL[d], hdr_style)
+                sun_col = _SCH_CAL_COL_BASE[3]
+                grid[0][sun_col] = Paragraph('SUN', hdr_style)
 
-            for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
-                r0, r1 = _sch_cal_row_range(s_start, s_end)
-                grid[1 + r0][0] = Paragraph(s_label, time_style)
-                if r1 > r0:
-                    span_cmds.append(('SPAN', (0, 1 + r0), (0, 1 + r1)))
+                for s_start, s_end, s_label in _SCH_STANDARD_SLOTS:
+                    r0, r1 = _sch_cal_row_range(s_start, s_end)
+                    grid[1 + r0][0] = Paragraph(s_label, time_style)
+                    if r1 > r0:
+                        span_cmds.append(('SPAN', (0, 1 + r0), (0, 1 + r1)))
 
-            for b in blocks:
-                col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
-                r0, r1 = 1 + b['row_start'], 1 + b['row_end']
-                cell_txt = '<br/><br/>'.join(line.replace('\n', '<br/>') for line in b['lines'])
-                grid[b['row_start'] + 1][col0] = Paragraph(cell_txt, cell_style)
-                if r1 > r0 or col1 > col0:
-                    span_cmds.append(('SPAN', (col0, r0), (col1, r1)))
+                card_cmds, edge_cmds = [], []
+                for b in blocks:
+                    col0, col1 = _sch_cal_abs_cols(b['pair_idx'], b['subcols'])
+                    r0, r1 = 1 + b['row_start'], 1 + b['row_end']
+                    cell_txt = '<br/><br/>'.join(line.replace('\n', '<br/>') for line in b['lines'])
+                    grid[b['row_start'] + 1][col0] = Paragraph(cell_txt, card_style)
+                    if r1 > r0 or col1 > col0:
+                        span_cmds.append(('SPAN', (col0, r0), (col1, r1)))
+                    # Card look of the on-screen preview: pink fill, red left edge.
+                    card_cmds.append(('BACKGROUND', (col0, r0), (col1, r1), CARD_FILL))
+                    edge_cmds.append(('LINEBEFORE', (col0, r0), (col0, r1), 2.2, CARD_EDGE))
 
-            row_heights = [HDR_H] + [
-                ROW_H_GAP if _SCH_CAL_FINE_ROWS[i][3] else ROW_H_NORMAL for i in range(n_fine)
-            ]
+                row_heights = [HDR_H] + [
+                    ROW_H_GAP if _SCH_CAL_FINE_ROWS[i][3] else ROW_H_NORMAL for i in range(n_fine)
+                ]
 
-            tbl = Table(grid, colWidths=COL_W, rowHeights=row_heights)
-            tbl.setStyle(TableStyle(span_cmds + [
-                ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-                ('GRID',          (0, 0), (-1, -1), 0.4, BLACK),
-                ('LEFTPADDING',   (0, 0), (-1, -1), 2),
-                ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
-                ('TOPPADDING',    (0, 0), (-1, -1), 1),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
-            ]))
-            room_flow.append(tbl)
+                # splitInRow: a calendar taller than a page (busy rooms, once the house
+                # style grows its rows) continues on the next page even where class
+                # cards span the break, instead of failing the whole PDF.
+                tbl = Table(grid, colWidths=COL_W, rowHeights=row_heights, splitInRow=1)
+                tbl.setStyle(TableStyle(span_cmds + card_cmds + [
+                    ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+                    ('GRID',          (0, 0), (-1, -1), 0.4, BLACK),
+                    ('LEFTPADDING',   (0, 0), (-1, -1), 2),
+                    ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
+                    ('TOPPADDING',    (0, 0), (-1, -1), 1),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                ] + edge_cmds))
+                room_flow.append(tbl)
 
-            if unscheduled:
-                room_flow.append(Spacer(1, 0.05*cm))
-                room_flow.append(Paragraph('Unscheduled / TBA: ' + '; '.join(unscheduled), note_style))
+                if unscheduled:
+                    room_flow.append(Spacer(1, 0.05*cm))
+                    room_flow.append(Paragraph('Unscheduled / TBA: ' + '; '.join(unscheduled), note_style))
 
-            story.append(KeepTogether(room_flow))
-            story.append(Spacer(1, 0.2*cm))
+                story.append(KeepTogether(room_flow))
+                story.append(Spacer(1, 0.2*cm))
 
     doc.build(story)
     buf.seek(0)
@@ -34391,15 +34514,19 @@ def report_preview(report_type):
 
             # Building → Room, each room's own table — same grouping principle
             # as the Class Schedule report's Program → Year Level → Section.
-            for bname, room_map in room_groups:
-                bldg_entry = {'label': bname, 'rooms': []}
-                for rname, info in room_map.items():
-                    bldg_entry['rooms'].append({
-                        'label': rname,
-                        'type':  info['type'],
-                        'rows':  [_room_official_row(r) for r in info['rows']],
-                    })
-                room_view.append(bldg_entry)
+            # One section per Academic Year + Semester (own title), like the calendar.
+            for p_sem, p_ay, p_groups in _room_report_periods(room_groups, room_sem_label, room_ay_label):
+                period = {'title': _room_official_title(p_sem, p_ay), 'buildings': []}
+                for bname, room_map in p_groups:
+                    bldg_entry = {'label': bname, 'rooms': []}
+                    for rname, info in room_map.items():
+                        bldg_entry['rooms'].append({
+                            'label': rname,
+                            'type':  info['type'],
+                            'rows':  [_room_official_row(r) for r in info['rows']],
+                        })
+                    period['buildings'].append(bldg_entry)
+                room_view.append(period)
 
             # Calendar layout: same Building → Room grouping, but each room
             # renders as one weekly timetable grid — reuses the exact same
@@ -34407,18 +34534,23 @@ def report_preview(report_type):
             # calendar view, just with the room-flavoured block text
             # (_room_cal_block_text) the Room Schedule tab's own Export
             # Schedule calendar view already uses.
+            # One calendar section per Academic Year + Semester (own title), never
+            # several terms stacked in one weekly grid.
             if room_layout == 'calendar':
-                for bname, room_map in room_groups:
-                    bldg_entry = {'label': bname, 'rooms': []}
-                    for rname, info in room_map.items():
-                        grid_rows, unscheduled = _sch_calendar_html_grid(info['rows'], text_fn=_room_cal_block_text)
-                        bldg_entry['rooms'].append({
-                            'label': rname,
-                            'type':  info['type'],
-                            'grid_rows': grid_rows,
-                            'unscheduled': unscheduled,
-                        })
-                    room_calendar_view.append(bldg_entry)
+                for p_sem, p_ay, p_groups in _room_report_periods(room_groups, room_sem_label, room_ay_label):
+                    period = {'title': _room_official_title(p_sem, p_ay), 'buildings': []}
+                    for bname, room_map in p_groups:
+                        bldg_entry = {'label': bname, 'rooms': []}
+                        for rname, info in room_map.items():
+                            grid_rows, unscheduled = _sch_calendar_html_grid(info['rows'], text_fn=_room_cal_block_text)
+                            bldg_entry['rooms'].append({
+                                'label': rname,
+                                'type':  info['type'],
+                                'grid_rows': grid_rows,
+                                'unscheduled': unscheduled,
+                            })
+                        period['buildings'].append(bldg_entry)
+                    room_calendar_view.append(period)
 
             columns, sections = [], None
         elif report_type == 'faculty_subject':
@@ -45041,8 +45173,9 @@ def api_faculty_teaching_assignments():
                 -- static official hour count — splitting into more slices must add
                 -- hours here without touching units above.
                 ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
-                COALESCE(pyl.programcode,'') || '-' || COALESCE(pyl.yearlevel::text,'')
-                    || ' ' || COALESCE(sec.sectionname,'') AS year_section,
+                -- One section label ("BSIT3", not "BSIT-3 BSIT3") — the same rule as
+                -- every other load view (faculty_load._YEAR_SECTION_SQL).
+                """ + faculty_load._YEAR_SECTION_SQL + """ AS year_section,
                 -- Section identity for HC16 section-pair rules on merged classes.
                 sc.sectionid AS sectionid,
                 pyl.programcode AS programcode,

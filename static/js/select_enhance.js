@@ -104,8 +104,8 @@
         .se-opt.disabled { color: #bbb; cursor: not-allowed; background: none; }
         .se-opt strong { color: #630100; font-weight: 900; }
         .se-opt.placeholder { color: #888; font-style: italic; }
-        .se-group { padding: 6px 12px 4px; font-size: .68rem; font-weight: 800; color: #888; letter-spacing: .4px;
-            text-transform: uppercase; background: #fafafa; }
+        .se-group { padding: 6px 12px 4px; font-size: .68rem; font-weight: 800; color: #1f1f1f; letter-spacing: .4px;
+            text-transform: uppercase; background: #fff; }
         .se-empty { padding: 10px 12px; font-size: .78rem; color: #999; font-style: italic; }`;
         const style = document.createElement('style');
         style.id = 'seStyles';

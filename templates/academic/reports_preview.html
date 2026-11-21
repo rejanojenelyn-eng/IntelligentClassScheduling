@@ -435,11 +435,12 @@
          per room, grouped under its building), matching what gets exported. ── -->
     {% elif report_type == 'room_schedule' and (room_view or room_calendar_view) %}
     <div class="sis-sheet">
-    <div class="sis-title">{{ room_title }}</div>
-    <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
-
     {% if room_layout == 'calendar' %}
-        {% for bldg in room_calendar_view %}
+        {# One section per Academic Year + Semester, each with its own title. #}
+        {% for period in room_calendar_view %}
+        <div class="sis-title"{% if not loop.first %} style="margin-top:28px;"{% endif %}>{{ period.title }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+        {% for bldg in period.buildings %}
         <div class="room-bldg-hdr">Building: {{ bldg.label }}</div>
         {% for room in bldg.rooms %}
             <div class="sis-yl-hdr">Room: {{ room.label }}{% if room.type %} — {{ room.type }}{% endif %}</div>
@@ -478,8 +479,13 @@
             {% endif %}
         {% endfor %}
         {% endfor %}
+        {% endfor %}
     {% else %}
-        {% for bldg in room_view %}
+        {# One section per Academic Year + Semester, each with its own title. #}
+        {% for period in room_view %}
+        <div class="sis-title"{% if not loop.first %} style="margin-top:28px;"{% endif %}>{{ period.title }}</div>
+        <div class="sis-campus">LOPEZ, QUEZON CAMPUS</div>
+        {% for bldg in period.buildings %}
         <div class="room-bldg-hdr">Building: {{ bldg.label }}</div>
         {% for room in bldg.rooms %}
             <div class="sis-yl-hdr">Room: {{ room.label }}{% if room.type %} — {{ room.type }}{% endif %}</div>
@@ -506,6 +512,7 @@
                     </table>
                 </div>
             </div>
+        {% endfor %}
         {% endfor %}
         {% endfor %}
     {% endif %}

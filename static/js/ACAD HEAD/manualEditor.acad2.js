@@ -866,6 +866,19 @@ document.addEventListener('click', function (e) {
 function formAyFilter()  { return document.getElementById('sel_ay').value  || ''; }
 function formSemFilter() { return document.getElementById('sel_sem').value || ''; }
 
+// Every searchable dropdown opens with an empty search box and every option shown —
+// text typed earlier (and the filter it applied) used to stay in the box. Clearing
+// fires the box's own 'input' handler, which un-hides the options.
+function _resetDSSSearch(menu) {
+    const si = menu && menu.querySelector('.dss-search-input');
+    if (!si) return null;
+    if (si.value) {
+        si.value = '';
+        si.dispatchEvent(new Event('input'));
+    }
+    return si;
+}
+
 function toggleDSSMenu(type, event) {
     event.stopPropagation();
     // HC16 group model: a designated Merge Group faculty is read-only here.
@@ -875,7 +888,7 @@ function toggleDSSMenu(type, event) {
     ['fac', 'room'].forEach(t => document.getElementById(`${t}_menu`).style.display = 'none');
     if (opening) {
         menu.style.display = 'block';
-        const searchInput = menu.querySelector('.dss-search-input');
+        const searchInput = _resetDSSSearch(menu);
         if (searchInput) setTimeout(() => searchInput.focus(), 40);
     }
 }
@@ -888,6 +901,7 @@ async function selectDSSOption(type, value, displayText) {
     document.getElementById(nameId).value     = displayText;
     document.getElementById(`${type}_trigger_text`).textContent = displayText;
     document.getElementById(`${type}_menu`).style.display = 'none';
+    _resetDSSSearch(document.getElementById(`${type}_menu`));
 
     if (type === 'room') selectRoom(value, displayText);
     if (type === 'fac') {
@@ -1585,6 +1599,7 @@ function toggleProgMenu(event) {
     event.stopPropagation();
     const menu = document.getElementById('prog_menu');
     menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    if (menu.style.display === 'block') _resetDSSSearch(menu);
 }
 
 function selectProg(code) {

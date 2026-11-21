@@ -1481,8 +1481,10 @@
                 </div>
                 <div class="dss-menu" id="fac_menu"></div>
             </div>
-            <input type="hidden" id="sel_faculty" value="">
-            <input type="hidden" id="fac_display_name" value="">
+            <!-- autocomplete=off: the browser must not refill these on F5 with a faculty
+                 picked earlier (the FACULTY LOAD tab would then reopen on that one). -->
+            <input type="hidden" id="sel_faculty" value="" autocomplete="off">
+            <input type="hidden" id="fac_display_name" value="" autocomplete="off">
             <div class="fac-lock-badge" id="fac-lock-badge" onclick="unlockFacultyChoice()" title="Click to change faculty">
                 <i class="fas fa-lock"></i> Faculty locked — click to reassign
             </div>
@@ -3618,7 +3620,10 @@ function _toggleCgCurrMenu(event) {
     if (!menu) return;
     const isOpen = menu.classList.contains('open');
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
-    if (!isOpen) menu.classList.add('open');
+    if (!isOpen) {
+        menu.classList.add('open');
+        if (typeof _resetDSSSearch === 'function') _resetDSSSearch(menu);   // no leftover typed text
+    }
 }
 
 // Fetches the persisted curriculum lock for a section+term (see /api/manual/curriculum_lock)
@@ -5374,7 +5379,8 @@ function startReassignFaculty() {
     const facMenu = document.getElementById('fac_menu');
     if (facMenu) {
         facMenu.style.display = 'block';
-        const si = facMenu.querySelector('.dss-search-input');
+        const si = (typeof _resetDSSSearch === 'function') ? _resetDSSSearch(facMenu)
+                                                            : facMenu.querySelector('.dss-search-input');
         if (si) setTimeout(() => si.focus(), 40);
     }
 }
@@ -5775,7 +5781,8 @@ window.unlockFacultyChoice = async function() {
     const facMenu = document.getElementById('fac_menu');
     if (facMenu) {
         facMenu.style.display = 'block';
-        const searchInput = facMenu.querySelector('.dss-search-input');
+        const searchInput = (typeof _resetDSSSearch === 'function') ? _resetDSSSearch(facMenu)
+                                                                     : facMenu.querySelector('.dss-search-input');
         if (searchInput) setTimeout(() => searchInput.focus(), 40);
     }
 };
@@ -6069,16 +6076,35 @@ async function _viewRoomOnly(roomId) {
     }
 }
 
+// Every room stays in this dropdown, grouped by building — the picked building's group
+// first. (It used to drop every other building's rooms once a building tab was clicked,
+// so no other room could be found from here. Picking a room of another building moves
+// the active building tab to it — see _viewRoomOnly.)
 function _rebuildRoomHdrDropdown(bldgId) {
     const sel = document.getElementById('room-hdr-sel');
     const prev = sel.value;
     sel.innerHTML = '<option value="">-- Select Room --</option>';
+    const groups = new Map();                       // building id -> {name, rooms}, page order
     allRooms.forEach(r => {
-        if (bldgId !== 'ALL' && String(r.bldg_id) !== String(bldgId)) return;
-        const opt = document.createElement('option');
-        opt.value = r.id; opt.textContent = r.name;
-        if (String(r.id) === String(prev)) opt.selected = true;
-        sel.appendChild(opt);
+        const k = String(r.bldg_id);
+        if (!groups.has(k)) groups.set(k, { name: r.bldg_name || 'Other', rooms: [] });
+        groups.get(k).rooms.push(r);
+    });
+    const order = [...groups.keys()];
+    if (bldgId !== 'ALL' && groups.has(String(bldgId))) {
+        order.splice(order.indexOf(String(bldgId)), 1);
+        order.unshift(String(bldgId));
+    }
+    order.forEach(k => {
+        const og = document.createElement('optgroup');
+        og.label = groups.get(k).name;
+        groups.get(k).rooms.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r.id; opt.textContent = r.name;
+            if (String(r.id) === String(prev)) opt.selected = true;
+            og.appendChild(opt);
+        });
+        sel.appendChild(og);
     });
 }
 
@@ -7954,7 +7980,10 @@ function toggleBcMenu(menuId, event) {
     if (!menu) return;
     const isOpen = menu.classList.contains('open');
     document.querySelectorAll('.bc-dropdown').forEach(m => m.classList.remove('open'));
-    if (!isOpen) menu.classList.add('open');
+    if (!isOpen) {
+        menu.classList.add('open');
+        if (typeof _resetDSSSearch === 'function') _resetDSSSearch(menu);   // no leftover typed text
+    }
 }
 
 // Section list is fetched dynamically (unlike AY/Sem/Prog/Year, which are baked into
@@ -10545,6 +10574,10 @@ function _applyRoomOccupancyFilter(sliceId) {
                 tab: tab,
                 room: val('sel_room'), roomName: val('room_display_name'),
                 viewRoom: window._gridRoomId || '',      // room shown via the room dropdown above the calendar
+                // Faculty shown in the FACULTY LOAD tab — the last one picked, not the
+                // open subject's faculty (which the restore below would otherwise show).
+                flFac: window._flCurrentFac ? window._flCurrentFac.emp : '',
+                flFacName: window._flCurrentFac ? window._flCurrentFac.name : '',
                 // Only a context the user actually picked (labels filled in) is worth restoring.
                 picked: !!(val('sel_prog') && !/^-?select/i.test(txt('bc-prog-text'))),
             }));
@@ -10569,7 +10602,7 @@ function _applyRoomOccupancyFilter(sliceId) {
             if (navType !== 'reload' || !raw) return;        // fresh visit: start blank
             ctx = JSON.parse(raw);
         } catch (e) { return; }
-        if (!ctx || !ctx.picked) return;
+        if (!ctx || (!ctx.picked && !(ctx.flFac && ctx.tab === 'tab-faculty'))) return;
         // A link that brings its own context (e.g. from Generate Schedule) wins.
         const q = new URLSearchParams(location.search);
         if (q.get('prog') || q.get('ay') || q.get('sect')) return;
@@ -10615,6 +10648,12 @@ function _applyRoomOccupancyFilter(sliceId) {
                     }
                     await _viewRoomOnly(r.id);
                 }
+            }
+            // Last: the FACULTY LOAD tab's own pick (the subject click above may have
+            // shown that subject's faculty there instead).
+            if (ctx.flFac && ctx.tab === 'tab-faculty' && typeof selectFlFaculty === 'function') {
+                await _wait(400);
+                await selectFlFaculty(ctx.flFac, ctx.flFacName);
             }
         } catch (e) { console.warn('[editor] context restore failed', e); }
     }
@@ -11503,8 +11542,10 @@ function _flIsRegSlice(s) { return _FL_WKDAYS.has(s.days || '') && _flEndHr(s) <
 // FACULTY LOAD tab, the assignment-time validation gate, and the GA can never drift.
 
 async function selectFlFaculty(empNum, name) {
+    window._flCurrentFac = { emp: String(empNum || ''), name: name || '' };   // kept across F5
     document.getElementById('flFacText').textContent = name || empNum;
     document.getElementById('flFacMenu').classList.remove('fl-fac-open');
+    if (typeof _resetDSSSearch === 'function') _resetDSSSearch(document.getElementById('flFacMenu'));
 
     const ayId = document.getElementById('sel_ay')?.value  || '';
     const sem  = document.getElementById('sel_sem')?.value || '';
