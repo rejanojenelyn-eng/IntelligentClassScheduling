@@ -3645,23 +3645,36 @@ function _cgPickerAvailable() {
 
 // The section's saved curriculum (sections.withbridging) is what the guide shows. It can be
 // changed here until the section has a Draft/Published schedule or an assigned faculty.
+// Called from selectBcSect AND from triggerCascade (an AY/semester change or a reload keeps
+// the same section, and the cascade starts by resetting to Regular). Two calls can overlap,
+// and on a slow connection (the hosted site) their replies can arrive in either order, so
+// a reply is applied only if it is the newest call AND its section is still the one
+// selected; otherwise a stale reply could flip a Bridging section back to Regular.
+// Returns true when it applied.
+var _curriculumLockSeq = 0;
 async function _applyCurriculumLockForSection(sectionId, ay, sem) {
-    _curriculumViewMode   = 'regular';
-    _curriculumModeLocked = false;
-    _curriculumLockReason = '';
-    _sectionHasBridging   = null;
-    if (!sectionId || !ay || !sem) return;
-    try {
-        const resp = await fetch(`/api/manual/curriculum_lock?section_id=${encodeURIComponent(sectionId)}` +
-            `&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
-        const data = await resp.json();
-        if (data.success) {
-            _curriculumViewMode   = data.curriculum_mode === 'bridging' ? 'bridging' : 'regular';
-            _curriculumModeLocked = !!data.locked;
-            _curriculumLockReason = data.lock_reason || '';
-            if (typeof data.has_bridging === 'boolean') _sectionHasBridging = data.has_bridging;
-        }
-    } catch(e) { /* keep the unlocked-Regular default on failure */ }
+    const seq = ++_curriculumLockSeq;
+    let mode = 'regular', locked = false, reason = '', hasBridging = null;
+    if (sectionId && ay && sem) {
+        try {
+            const resp = await fetch(`/api/manual/curriculum_lock?section_id=${encodeURIComponent(sectionId)}` +
+                `&ay_id=${encodeURIComponent(ay)}&sem=${encodeURIComponent(sem)}`);
+            const data = await resp.json();
+            if (data.success) {
+                mode   = data.curriculum_mode === 'bridging' ? 'bridging' : 'regular';
+                locked = !!data.locked;
+                reason = data.lock_reason || '';
+                if (typeof data.has_bridging === 'boolean') hasBridging = data.has_bridging;
+            }
+        } catch(e) { /* keep the unlocked-Regular default on failure */ }
+    }
+    if (seq !== _curriculumLockSeq) return false;
+    if (String(document.getElementById('sel_section')?.value || '') !== String(sectionId || '')) return false;
+    _curriculumViewMode   = mode;
+    _curriculumModeLocked = locked;
+    _curriculumLockReason = reason;
+    _sectionHasBridging   = hasBridging;
+    return true;
 }
 
 // Re-check only the lock (not the chosen curriculum) for the open section — after a Save,

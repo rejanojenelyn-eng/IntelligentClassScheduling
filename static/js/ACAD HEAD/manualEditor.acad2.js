@@ -4130,6 +4130,16 @@ async function triggerCascade(skipGridRender = false) {
 
     const sem = document.getElementById('sel_sem').value || '';
 
+    // The Regular/Bridging choice belongs to the SECTION (sections.withbridging), not to
+    // the program/year context reset above. A Program/Year change clears sel_section
+    // synchronously (_loadSectionOptions) before this point, so a section still selected
+    // here is the same one (AY/semester change, save/delete reload, live update): restore
+    // its saved curriculum, or a Bridging section would show only Regular subjects.
+    const _tcSectForMode = document.getElementById('sel_section')?.value || '';
+    if (_tcSectForMode && typeof _applyCurriculumLockForSection === 'function') {
+        await _applyCurriculumLockForSection(_tcSectForMode, ay, sem);
+    }
+
     const currDisplay = document.getElementById('display_curr');
     const currHidden  = document.getElementById('curr_id_hidden');
     const subjSelect  = document.getElementById('sel_subj');

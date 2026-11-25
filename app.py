@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import hmac
 import os
 import re
@@ -956,26 +957,42 @@ app.config.update(
 )
 
 
-# Static files (CSS/JS/fonts/images): every url_for('static', ...) carries ?v=<file
-# mtime>, so the browser can keep a file for a year and still fetches the new copy the
-# moment it changes. Without this every page load re-requested every stylesheet and
-# script; while the server was busy (e.g. a long generation) those requests queued,
-# pages slowed down and text showed in the browser's default font until the CSS came.
-_STATIC_VERSIONS = {}
+# Static files (CSS/JS/fonts/images): every url_for('static', ...) carries ?v=<hash of
+# the file's contents>, so the browser can keep a file for a year and still fetches the
+# new copy the moment it changes. Without this every page load re-requested every
+# stylesheet and script; while the server was busy (e.g. a long generation) those
+# requests queued, pages slowed down and text showed in the browser's default font until
+# the CSS came.
+# A content hash, not the file's mtime: a hosting build (Railway) can give every file the
+# same fixed timestamp on each deploy, so an mtime-based ?v= never changed there and
+# browsers kept serving last year's cached JS after a fix was deployed (e.g. the Manual
+# Editor's Bridging curriculum), while it worked locally where editing changes the mtime.
+_STATIC_VERSIONS = {}   # filename -> (mtime_ns, size, version)
+
+
+def _static_version(name):
+    path = os.path.join(app.static_folder, name)
+    st = os.stat(path)
+    cached = _STATIC_VERSIONS.get(name)
+    if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size and not app.debug:
+        return cached[2]
+    h = hashlib.sha1()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 16), b''):
+            h.update(chunk)
+    version = h.hexdigest()[:12]
+    _STATIC_VERSIONS[name] = (st.st_mtime_ns, st.st_size, version)
+    return version
 
 
 @app.url_defaults
 def _static_cache_bust(endpoint, values):
     if endpoint != 'static' or 'v' in values or not values.get('filename'):
         return
-    name = values['filename']
-    # Re-read in debug (files change while developing); once per file otherwise.
-    if app.debug or name not in _STATIC_VERSIONS:
-        try:
-            _STATIC_VERSIONS[name] = int(os.stat(os.path.join(app.static_folder, name)).st_mtime)
-        except OSError:
-            return
-    values['v'] = _STATIC_VERSIONS[name]
+    try:
+        values['v'] = _static_version(values['filename'])
+    except OSError:
+        return
 
 
 def _static_max_age(filename):
