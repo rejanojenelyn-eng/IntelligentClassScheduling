@@ -529,6 +529,30 @@
   </div>
 </div>
 
+<!-- ── MODAL: Activate / Deactivate Section ─────────── -->
+<div id="modalToggleSection" class="s-modal">
+  <div class="s-modal-box w-sm">
+    <div class="s-modal-hd">
+      <h2><i class="fas fa-power-off" style="margin-right:8px;font-size:1rem;"></i><span id="toggleSecTitle">Deactivate Section</span></h2>
+      <button class="modal-x" onclick="closeSModal('modalToggleSection')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="s-modal-body">
+      <div class="pmd-del-info-box">
+        <span class="pmd-del-info-label">Section: </span>
+        <span class="pmd-del-info-code" id="toggleSecName"></span>
+      </div>
+      <p class="lock-warn-body" id="toggleSecBody" style="margin-top:12px;"></p>
+    </div>
+    <div class="m-divider" style="margin:0 26px;"></div>
+    <div class="s-modal-ft">
+      <button type="button" class="btn-mc" onclick="closeSModal('modalToggleSection')">Cancel</button>
+      <button type="button" class="btn-ms btn-ms-danger" id="btnConfirmSecToggle" onclick="_confirmToggleSection()">
+        <i class="fas fa-ban"></i> Deactivate
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ── MODAL: Delete Section ─────────────────────────── -->
 <div id="modalDeleteSection" class="s-modal">
   <div class="s-modal-box w-sm">

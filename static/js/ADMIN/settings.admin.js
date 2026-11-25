@@ -2108,14 +2108,18 @@ async function _doSavePylRow(pylId, yl, active, numSec) {
       }
       _syncProgramStatusBadge(data.prog_code, data.prog_isactive);
       _renderHeader(prog || {});
+      if (prog) _renderProgInfo(prog);
       _renderYearLevelsGrid(prog);
       _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
       _renderSectionsPage(1);
+      const progNote = (!data.isactive && !data.prog_isactive)
+        ? ` ${data.prog_code} has no active year level left, so the program was deactivated too.`
+        : '';
       const cascadeNote = data.cascaded_future_ay_count
         ? ` (also deactivated in ${data.cascaded_future_ay_count} future academic year${data.cascaded_future_ay_count === 1 ? '' : 's'} already on file; past years were left untouched)`
         : '';
       _showToast('success',
-        `${_ordinalYear(yl)} saved — ${data.active_section_count} section(s)${data.isactive ? ', Active' : ', Inactive'}.${cascadeNote}`);
+        `${_ordinalYear(yl)} saved — ${data.active_section_count} section(s)${data.isactive ? ', Active' : ', Inactive'}.${cascadeNote}${progNote}`);
     } else {
       _showToast('error', data.error || 'Failed to save year level.');
       if (btn) { btn.disabled = false; btn.innerHTML = orig; }
@@ -2150,8 +2154,8 @@ function _renderSectionsPage(page) {
   const fyl = document.getElementById('pmdSecYLFilter')?.value ?? '';
   let secs  = _PM_CURRENT_SECTIONS;
   if (fyl)          secs = secs.filter(s => String(s.yearlevel) === String(fyl));
-  if (fv === 'true')  secs = secs.filter(s => s.has_schedule === true);
-  if (fv === 'false') secs = secs.filter(s => s.has_schedule === false);
+  if (fv === 'true')  secs = secs.filter(s => !!s.isactive);
+  if (fv === 'false') secs = secs.filter(s => !s.isactive);
 
   const total = secs.length;
   const pages = Math.max(1, Math.ceil(total / _PM_SEC_PER_PAGE));
@@ -2169,8 +2173,9 @@ function _renderSectionsPage(page) {
   }
 
   tbody.innerHTML = items.map(s => {
-    const sCls  = s.has_schedule ? 'pmd-status-active' : 'pmd-status-inactive';
-    const sLbl  = s.has_schedule ? 'Active' : 'Inactive';
+    const on    = !!s.isactive;
+    const sCls  = on ? 'pmd-status-active' : 'pmd-status-inactive';
+    const sLbl  = on ? 'Active' : 'Inactive';
     const secId = s.sectionid || '';
     const pylId = s.programyearlevelid || '';
     const sName = s.sectionname.replace(/'/g, "\\'");
@@ -2185,6 +2190,9 @@ function _renderSectionsPage(page) {
       <td style="white-space:nowrap;">
         <button class="pmd-edit-btn" onclick="openEditSection('${secId}','${sName}',${pylId},${Number(s.yearlevel) || 0},${s.withbridging ? 'true' : 'false'})">
           <i class="fas fa-edit"></i> Edit</button>
+        <button class="${on ? 'pmd-del-btn' : 'pmd-edit-btn'}" style="margin-left:6px;"
+          onclick="openToggleSection('${secId}','${sName}',${on ? 'false' : 'true'})">
+          <i class="fas ${on ? 'fa-ban' : 'fa-check'}"></i> ${on ? 'Deactivate' : 'Activate'}</button>
         <button class="pmd-del-btn"  onclick="openDeleteSection('${secId}','${sName}',${pylId})" style="margin-left:6px;">
           <i class="fas fa-trash"></i> Delete</button>
       </td>
@@ -2483,6 +2491,99 @@ async function _submitEditSection(e) {
   }
 }
 
+/* ── Activate / Deactivate one section ──────────────────
+   Server cascades upward: the year level's last active section going off turns the
+   year level off, and the program's last active year level going off turns the
+   program off. Activating brings its year level + program back on. */
+let _TOGGLE_SEC = null;   // { id, name, activate }
+
+function _activeSiblingsLeft(secId) {
+  const sec = (PM_DATA.sections || []).find(s => String(s.sectionid) === String(secId));
+  if (!sec) return 1;
+  return (PM_DATA.sections || []).filter(s =>
+    s.programyearlevelid === sec.programyearlevelid && s.isactive && String(s.sectionid) !== String(secId)
+  ).length;
+}
+
+function openToggleSection(sectionId, sectionName, activate) {
+  if (!sectionId) return;
+  _TOGGLE_SEC = { id: sectionId, name: sectionName, activate: !!activate };
+  const title = document.getElementById('toggleSecTitle');
+  const body  = document.getElementById('toggleSecBody');
+  const btn   = document.getElementById('btnConfirmSecToggle');
+  if (title) title.textContent = activate ? 'Activate Section' : 'Deactivate Section';
+  document.getElementById('toggleSecName').textContent = sectionName;
+  if (body) {
+    body.textContent = activate
+      ? 'The section will be active again. If its year level or program is inactive, they will be activated too.'
+      : (_activeSiblingsLeft(sectionId) === 0
+          ? 'This is the last active section of its year level, so the year level will be deactivated too. ' +
+            'If it is the program\'s last active year level, the program will be deactivated as well.'
+          : 'The section will be marked inactive. Its schedule records are kept.');
+  }
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = activate ? '<i class="fas fa-check"></i> Activate' : '<i class="fas fa-ban"></i> Deactivate';
+    btn.classList.toggle('btn-ms-danger', !activate);
+  }
+  openSModal('modalToggleSection');
+}
+
+async function _confirmToggleSection() {
+  if (!_TOGGLE_SEC) return;
+  const { id, name, activate } = _TOGGLE_SEC;
+  const btn  = document.getElementById('btnConfirmSecToggle');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+  try {
+    const fd = new FormData();
+    fd.append('section_id', id);
+    fd.append('isactive', activate ? 'true' : 'false');
+    const resp = await fetch('/admin/settings/section/toggle-active', {
+      method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error(`Server returned status ${resp.status}.`);
+    const data = await resp.json();
+    if (!data.success) {
+      _showToast('error', data.error || 'Could not update the section.');
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+      return;
+    }
+    const sec = (PM_DATA.sections || []).find(s => s.sectionid === Number(data.sectionid));
+    if (sec) sec.isactive = data.isactive;
+    const ylRow = (PM_DATA.yearlevels || []).find(y => y.programyearlevelid === Number(data.pyl_id));
+    if (ylRow) {
+      ylRow.isactive = data.pyl_isactive;
+      ylRow.active_section_count = (PM_DATA.sections || []).filter(
+        s => s.programyearlevelid === Number(data.pyl_id) && s.isactive).length;
+    }
+    const prog = PM_DATA.programs.find(p => p.programcode === data.prog_code);
+    if (prog) {
+      prog.isactive      = data.prog_isactive;
+      prog.section_count = (PM_DATA.sections || []).filter(s => s.programcode === data.prog_code && s.isactive).length;
+    }
+    _syncProgramStatusBadge(data.prog_code, data.prog_isactive);
+    _renderHeader(prog || {});
+    if (prog) _renderProgInfo(prog);
+    _renderYearLevelsGrid(prog);
+    _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
+    _renderSectionsPage(1);
+    closeSModal('modalToggleSection');
+    _TOGGLE_SEC = null;
+
+    let msg = `Section "${name}" ${activate ? 'activated' : 'deactivated'}.`;
+    if (!activate && !data.pyl_isactive) {
+      msg += ` ${_ordinalYear(data.yearlevel)} has no active section left, so it was deactivated too.`;
+      if (!data.prog_isactive) msg += ` ${data.prog_code} has no active year level left, so the program was deactivated.`;
+    }
+    _showToast('success', msg);
+  } catch (err) {
+    _showToast('error', 'Error: ' + err.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
 /* ── Delete section modal ───────────────────────────── */
 let _DELETE_SEC_ID   = null;
 let _DELETE_SEC_NAME = null;
@@ -2532,8 +2633,11 @@ async function _confirmDeleteSection() {
         prog.isactive      = data.prog_isactive;
         prog.section_count = (PM_DATA.sections || []).filter(s => s.programcode === data.prog_code && s.isactive).length;
       }
+      const ylRow = (PM_DATA.yearlevels || []).find(y => y.programyearlevelid === Number(data.pyl_id));
+      if (ylRow) ylRow.isactive = data.pyl_isactive;
       _syncProgramStatusBadge(data.prog_code, data.prog_isactive);
       _renderHeader(prog || {});
+      if (prog) _renderProgInfo(prog);
       _renderYearLevelsGrid(prog);  /* uses live _secCountForYL — auto-reflects */
       _PM_CURRENT_SECTIONS = _deriveSections(PM_SELECTED);
       _renderSectionsPage(1);

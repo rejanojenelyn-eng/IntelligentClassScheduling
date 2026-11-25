@@ -13658,14 +13658,15 @@ def _facsub_form_view(p):
     with the same helpers as the PDF/Word/Excel form, so the preview matches the file."""
     T = _ta_export
     secs = []
-    for title, rws, total_lbl, total in T._sections(p):
+    for title, rws, total_lbl, total, total_hrs in T._sections(p):
         body = [T._load_row(r) for r in rws]
         secs.append({'title': title, 'rows': body, 'blank': max(0, T.MIN_LOAD_ROWS - len(body)),
-                     'total_label': total_lbl, 'total': T._num(total)})
+                     'total_label': total_lbl, 'total': T._num(total),
+                     'hours_label': T.TOTAL_HOURS_LABEL, 'total_hours': T._num(total_hrs)})
     ts = T._ts_line(p)
     return {'title_lines': T._title_lines(p), 'info': T._info_rows(p), 'sections': secs,
             'ts': (ts[0], T._num(ts[1])) if ts else None,
-            'per_day': T._per_day_rows(p), 'official': T._official_rows(),
+            'per_day': T._per_day_rows(p), 'official': T._official_rows(p),
             'headers': T.LOAD_HEADERS, 'center': sorted(T.LOAD_CENTER),
             'day_headers': T.DAY_HEADERS, 'legend': T.LEGEND, 'campus': T.CAMPUS}
 
@@ -31261,6 +31262,51 @@ def settings_edit_program():
     finally:
         cur.close(); conn.close()
 
+# ── Program Management status cascade ─────────────────────────────────────────
+# Down: Program off → its year levels + sections off; Year level off → its sections off.
+# Up:   every section of a year level off → that year level off;
+#       every year level of a program off → that program off.
+# "Every year level" means the active academic year and later: past AYs keep whatever
+# status they had (same scope as the Deactivate Program cascade), so an old AY's rows
+# that were simply never touched can't keep a program "active" forever.
+def _pm_first(row):
+    if row is None:
+        return None
+    return next(iter(row.values())) if isinstance(row, dict) else row[0]
+
+
+def _pm_program_has_active_yearlevel(cur, prog_code):
+    cur.execute("SELECT yearstart FROM academicyear WHERE isactive = TRUE ORDER BY yearstart DESC LIMIT 1")
+    ref = _pm_first(cur.fetchone())
+    cur.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM program_yearlevel pyl
+            LEFT JOIN academicyear ay ON ay.academicyearid = pyl.academicyearid
+            WHERE UPPER(pyl.programcode) = UPPER(%s) AND pyl.isactive = TRUE
+              AND (%s IS NULL OR ay.yearstart IS NULL OR ay.yearstart >= %s)
+        )
+    """, (prog_code, ref, ref))
+    return bool(_pm_first(cur.fetchone()))
+
+
+def _pm_cascade_up(cur, pyl_id, prog_code):
+    """After sections/year levels were turned off: a year level left with no active
+    section goes inactive, then a program left with no active year level goes inactive.
+    Returns (year level active, program active)."""
+    pyl_active = True
+    if pyl_id:
+        cur.execute("SELECT EXISTS (SELECT 1 FROM sections WHERE programyearlevelid = %s AND isactive = TRUE)",
+                    (pyl_id,))
+        if not _pm_first(cur.fetchone()):
+            cur.execute("UPDATE program_yearlevel SET isactive = FALSE WHERE programyearlevelid = %s", (pyl_id,))
+        cur.execute("SELECT isactive FROM program_yearlevel WHERE programyearlevelid = %s", (pyl_id,))
+        pyl_active = bool(_pm_first(cur.fetchone()))
+    if not _pm_program_has_active_yearlevel(cur, prog_code):
+        cur.execute("UPDATE programs SET isactive = FALSE WHERE UPPER(programcode) = UPPER(%s)", (prog_code,))
+    cur.execute("SELECT isactive FROM programs WHERE UPPER(programcode) = UPPER(%s)", (prog_code,))
+    return pyl_active, bool(_pm_first(cur.fetchone()))
+
+
 @app.route('/admin/settings/program/yearlevel/toggle', methods=['POST'])
 def settings_toggle_program_yearlevel():
     if session.get('role') != 'Admin':
@@ -31276,8 +31322,17 @@ def settings_toggle_program_yearlevel():
         cur.execute("""
             UPDATE program_yearlevel SET isactive = %s
             WHERE programcode = %s AND yearlevel = %s
+            RETURNING programyearlevelid
         """, (isactive, prog_code, int(yearlevel)))
-        updated = cur.rowcount
+        pyl_ids = [r[0] for r in cur.fetchall()]
+        updated = len(pyl_ids)
+        if pyl_ids:
+            if isactive:
+                cur.execute("UPDATE programs SET isactive = TRUE WHERE programcode = %s", (prog_code,))
+            else:
+                # Down: the year level's sections go off with it. Up: maybe the program too.
+                cur.execute("UPDATE sections SET isactive = FALSE WHERE programyearlevelid = ANY(%s)", (pyl_ids,))
+                _pm_cascade_up(cur, None, prog_code)
         conn.commit()
         return jsonify({'success': True, 'updated': updated, 'isactive': isactive})
     except Exception as e:
@@ -31579,14 +31634,10 @@ def settings_update_program_yearlevel():
             WHERE programyearlevelid=%s
         """, (is_active, pyl_id))
 
-        # Cascade program active status
+        # Cascade program active status: the last active year level (active AY and later —
+        # past AYs don't count) turning off turns the program off; any turning on, back on.
         if not is_active:
-            cur.execute("""
-                SELECT COUNT(*) FROM program_yearlevel
-                WHERE programcode=%s AND isactive=TRUE AND programyearlevelid != %s
-            """, (prog_code, pyl_id))
-            if cur.fetchone()['count'] == 0:
-                cur.execute("UPDATE programs SET isactive=FALSE WHERE programcode=%s", (prog_code,))
+            _pm_cascade_up(cur, None, prog_code)
         else:
             cur.execute("UPDATE programs SET isactive=TRUE WHERE programcode=%s", (prog_code,))
 
@@ -31725,7 +31776,14 @@ def settings_deactivate_section():
     section_id = request.form.get('section_id')
     conn = get_db_connection(); cur = conn.cursor()
     try:
-        cur.execute("UPDATE sections SET isactive=FALSE WHERE sectionid=%s", (section_id,))
+        cur.execute("""
+            UPDATE sections s SET isactive=FALSE FROM program_yearlevel pyl
+            WHERE s.sectionid=%s AND pyl.programyearlevelid = s.programyearlevelid
+            RETURNING pyl.programyearlevelid, pyl.programcode
+        """, (section_id,))
+        _hit = cur.fetchone()
+        if _hit:
+            _pm_cascade_up(cur, _hit[0], _hit[1])    # last section off → year level → program
         conn.commit()
         flash("Section deactivated.", "success")
         write_activity_log("Deactivated Section",
@@ -31782,6 +31840,64 @@ def settings_toggle_program_active():
         return jsonify({'success': False, 'error': _public_error(e)})
     finally:
         cur.close(); conn.close()
+
+
+@app.route('/admin/settings/section/toggle-active', methods=['POST'])
+def settings_toggle_section_active():
+    """Program Management → Sections: turn one section on/off.
+    Off: if it was the year level's last active section, the year level goes off, and
+    if that was the program's last active year level, the program goes off too.
+    On: its year level and program come back on (an active section can't sit under an
+    inactive year level / program)."""
+    if session.get('role') != 'Admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    section_id = request.form.get('section_id', '').strip()
+    is_active  = request.form.get('isactive', 'false').lower() == 'true'
+    if not section_id:
+        return jsonify({'success': False, 'error': 'Section ID is required.'})
+    conn = None; cur = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT s.sectionname, pyl.programyearlevelid, pyl.programcode, pyl.yearlevel
+            FROM sections s JOIN program_yearlevel pyl ON pyl.programyearlevelid = s.programyearlevelid
+            WHERE s.sectionid = %s
+        """, (section_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Section not found.'})
+        pyl_id, prog_code = row['programyearlevelid'], row['programcode']
+
+        cur.execute("UPDATE sections SET isactive = %s WHERE sectionid = %s", (is_active, section_id))
+        if is_active:
+            cur.execute("UPDATE program_yearlevel SET isactive = TRUE WHERE programyearlevelid = %s", (pyl_id,))
+            cur.execute("UPDATE programs SET isactive = TRUE WHERE programcode = %s", (prog_code,))
+            pyl_active, prog_active = True, True
+        else:
+            pyl_active, prog_active = _pm_cascade_up(cur, pyl_id, prog_code)
+        conn.commit()
+
+        _note = ''
+        if not is_active and not pyl_active:
+            _note = f'; Year {row["yearlevel"]} has no active section left, so it was deactivated'
+            if not prog_active:
+                _note += f', and so was program {prog_code}'
+        try:
+            write_activity_log(f"{'Activated' if is_active else 'Deactivated'} Section",
+                               f"Section '{row['sectionname']}' ({prog_code} Year {row['yearlevel']}) "
+                               f"{'activated' if is_active else 'deactivated'}{_note}",
+                               category='program', color=_LOG_COLORS.get('program', 'blue'))
+        except Exception:
+            pass
+        return jsonify({'success': True, 'sectionid': int(section_id), 'isactive': is_active,
+                        'pyl_id': pyl_id, 'yearlevel': row['yearlevel'], 'pyl_isactive': pyl_active,
+                        'prog_code': prog_code, 'prog_isactive': prog_active})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)})
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
 
 
 @app.route('/admin/settings/section/edit', methods=['POST'])
@@ -31892,16 +32008,11 @@ def settings_delete_section():
         cur.execute("DELETE FROM sections WHERE sectionid=%s", (section_id,))
         mode = 'hard'
 
-        # Count remaining active sections for this program_yearlevel
+        # Count remaining active sections for this program_yearlevel; none left → the
+        # year level goes inactive, and if that was the program's last one, the program too.
         cur.execute("SELECT COUNT(*) FROM sections WHERE programyearlevelid=%s AND isactive=TRUE", (pyl_id,))
         new_sec_count = cur.fetchone()['count']
-        pyl_active = new_sec_count > 0
-        if not pyl_active:
-            cur.execute("UPDATE program_yearlevel SET isactive=FALSE WHERE programyearlevelid=%s", (pyl_id,))
-
-        cur.execute("SELECT isactive FROM programs WHERE programcode=%s", (prog_code,))
-        prog_row   = cur.fetchone()
-        prog_active = bool(prog_row['isactive']) if prog_row else False
+        pyl_active, prog_active = _pm_cascade_up(cur, pyl_id, prog_code)
 
         conn.commit()
         try:
@@ -36287,6 +36398,11 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
             'units':        g.get('units'),
             'year_section': g.get('year_section') or '—',
             'time_range':   _collapse_time_range(g.get('time_range')) or '—',
+            # NO. OF HRS: every meeting in the (uncollapsed) TIME cell, e.g. M/TH 2-4PM = 4.
+            # A row split across buckets (designee Regular/PT time, or a cap spill into TS)
+            # shows only its own share, which the TIME text alone can't express.
+            'hours':        (round(float(g.get('hrs') or 0), 2) if g.get('_split')
+                             else _ta_export.range_hours(g.get('time_range'))),
             'days':         _abbr_days(g.get('days')),
             'room':         g.get('room') or 'TBA',
             'effectivity':  effectivity,
@@ -36294,6 +36410,8 @@ def _my_teaching_load_payload(cur, emp_num, ay_id, sem, source):
 
 
     return {
+        # OFFICIAL TIME row: the time blocks with a class, per day.
+        'official_time': _ta_export.official_time_by_day(sessions),
         'success': True,
         'source': source,
         'has_schedule': bool(sessions),

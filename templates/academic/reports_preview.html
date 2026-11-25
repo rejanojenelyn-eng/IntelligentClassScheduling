@@ -554,7 +554,7 @@
             </tbody>
         </table>
         </div>
-        <div class="ta-total">{{ sec.total_label }}&nbsp;&nbsp;&nbsp;{{ sec.total }}</div>
+        <div class="ta-total">{{ sec.total_label }}&nbsp;&nbsp;&nbsp;{{ sec.total }}<span style="margin-left:2.5em">{{ sec.hours_label }}&nbsp;&nbsp;&nbsp;{{ sec.total_hours }}</span></div>
         {% endfor %}
         {% if f.ts %}<div class="ta-total">{{ f.ts[0] }}&nbsp;&nbsp;&nbsp;{{ f.ts[1] }}</div>{% endif %}
         {% for gtitle, grows, gcls in [('TEACHING LOAD PER DAY (HOURS)', f.per_day, ''), ('OFFICIAL TIME / ADVISING TIME', f.official, 'ta-tall')] %}
@@ -564,7 +564,7 @@
             <thead><tr><th></th>{% for h in f.day_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
             <tbody>
             {% for row in grows %}
-                <tr class="{{ 'ta-tot' if row[0] == 'TOTAL' else '' }}"><th class="l">{{ row[0] }}</th>{% for v in row[1:] %}<td class="c">{{ v }}</td>{% endfor %}</tr>
+                <tr class="{{ 'ta-tot' if row[0] == 'TOTAL' else '' }}"><th class="l">{{ row[0] }}</th>{% for v in row[1:] %}<td class="c" style="white-space:pre-line">{{ v }}</td>{% endfor %}</tr>
             {% endfor %}
             </tbody>
         </table>

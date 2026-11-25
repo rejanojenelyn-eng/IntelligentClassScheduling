@@ -6,8 +6,9 @@ LAYOUT follows the official PUP "Faculty Assignment" form (reference supplied
 by the office): title + semester line, an EMP NO / EMP NAME / EMP STATUS ×
 COLLEGE / DEPT CODE / DEPARTMENT block, REGULAR LOAD and PART-TIME tables
 (Subject Code, Subject Description, Units, Year & Section, Subj. Ref., Time,
-Time Code, Day/s, Room, Effectivity) with blank ruled rows, each followed by
-its total, then TEACHING LOAD PER DAY (HOURS), OFFICIAL TIME / ADVISING TIME,
+No. of Hrs, Day/s, Room, Effectivity) with blank ruled rows, each followed by
+its totals (units = sum of the UNITS column, hours = sum of the NO. OF HRS
+column), then TEACHING LOAD PER DAY (HOURS), OFFICIAL TIME / ADVISING TIME,
 the subject-reference legend and a signature line.
 
 
@@ -19,8 +20,9 @@ the shared file (app._SCH_LOGO_PATH, passed in by the caller).
 
 DATA is exactly the Teaching Assignment tab's payload
 (app._my_teaching_load_payload). Fields the system does not record are left
-blank for hand-filling, as on the paper form: TIME CODE, OFFICIAL TIME and
-ADVISING TIME. SUBJ. REF. is derived from the program: diploma programs
+blank for hand-filling, as on the paper form: ADVISING TIME. NO. OF HRS is the
+weekly meeting time of the row's TIME cell (2PM-3PM = 1); OFFICIAL TIME lists,
+per day, the time blocks the faculty has classes. SUBJ. REF. is derived from the program: diploma programs
 (codes starting with "D", e.g. DIT) → (T) iTech, all others → (C) College.
 """
 import csv
@@ -34,7 +36,8 @@ _SEM_WORDS = {'1st Semester': 'FIRST SEMESTER', '2nd Semester': 'SECOND SEMESTER
 
 
 LOAD_HEADERS = ['SUBJECT CODE', 'SUBJECT DESCRIPTION', 'UNITS', 'YEAR & SECTION', 'SUBJ. REF.',
-                'TIME', 'TIME CODE', 'DAY/S', 'ROOM', 'EFFTVTY.']
+                'TIME', 'NO. OF HRS', 'DAY/S', 'ROOM', 'EFFTVTY.']
+HOURS_COL = LOAD_HEADERS.index('NO. OF HRS')
 LOAD_CENTER = {0, 2, 3, 4, 5, 6, 7, 8, 9}          # everything but the description
 LOAD_COL_CM = [1.75, 3.95, 0.95, 2.05, 0.95, 3.45, 1.15, 1.2, 1.4, 1.75]   # = 18.6 cm (A4 portrait, 1.2 cm margins)
 LOAD_XLSX_W = [12, 28, 7, 14, 7, 26, 8, 8, 10, 12]
@@ -133,6 +136,74 @@ def compact_time_range(time_range):
 
 
 
+def _clock_minutes(t):
+    """'07:30 AM' → 450, '12:00 PM' → 720, '13:00' → 780; None if unreadable."""
+    m = re.match(r'\s*(\d{1,2}):(\d{2})\s*([AP]M)?\s*$', t or '', re.I)
+    if not m:
+        return None
+    h, mm, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or '').upper()
+    if ap == 'PM' and h != 12:
+        h += 12
+    elif ap == 'AM' and h == 12:
+        h = 0
+    return h * 60 + mm
+
+
+
+
+def _time_ranges(time_range):
+    """'07:30 AM - 09:00 AM, 01:00 PM - 02:00 PM' → [(450, 540), (780, 840)]."""
+    out = []
+    for rng in str(time_range or '').split(','):
+        ends = rng.split(' - ')
+        if len(ends) == 2:
+            a, b = _clock_minutes(ends[0]), _clock_minutes(ends[1])
+            if a is not None and b is not None and b > a:
+                out.append((a, b))
+    return out
+
+
+
+
+def range_hours(time_range):
+    """Hours of every meeting in a TIME cell: '02:00 PM - 03:00 PM' → 1,
+    '10:00 AM - 12:00 PM, 10:00 AM - 11:30 AM' → 3.5."""
+    return round(sum(b - a for a, b in _time_ranges(time_range)) / 60.0, 2)
+
+
+
+
+def _clock_label(minutes):
+    h, mm = divmod(int(minutes), 60)
+    ap = 'AM' if h < 12 else 'PM'
+    h12 = h % 12 or 12
+    return f"{h12}{'' if mm == 0 else f':{mm:02d}'}{ap}"
+
+
+
+
+def official_time_by_day(sessions):
+    """{'Monday': ['7:30AM-12PM', '1PM-4PM'], ...} — the time blocks the faculty
+    has classes each day (overlapping / back-to-back classes joined into one block)."""
+    by_day = {}
+    for s in sessions or []:
+        day = (s.get('days') or '').strip()
+        if day in DAYS:
+            by_day.setdefault(day, []).extend(_time_ranges(s.get('time_range')))
+    out = {}
+    for day, rngs in by_day.items():
+        blocks = []
+        for a, b in sorted(rngs):
+            if blocks and a <= blocks[-1][1]:
+                blocks[-1][1] = max(blocks[-1][1], b)
+            else:
+                blocks.append([a, b])
+        out[day] = [f"{_clock_label(a)}-{_clock_label(b)}" for a, b in blocks]
+    return out
+
+
+
+
 def subject_reference(year_section):
     """(T) iTech for diploma programs (codes starting with D, e.g. DIT); (C) College otherwise."""
     m = re.match(r'\s*([A-Za-z]+)', year_section or '')
@@ -165,24 +236,61 @@ def _info_rows(d):
 
 
 
+def _row_hours(r):
+    """NO. OF HRS: the payload's 'hours' (computed from the full, uncollapsed TIME
+    cell), else the TIME text itself."""
+    h = r.get('hours')
+    if h is None:
+        h = range_hours(r.get('time_range'))
+    try:
+        return round(float(h), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+
+
 def _load_row(r):
+    hrs = _row_hours(r)
     return [r.get('subjectcode') or '', r.get('subjectname') or '', _num(r.get('units')),
             r.get('year_section') or '', subject_reference(r.get('year_section')),
-            compact_time_range(r.get('time_range')), '',             # TIME CODE: not recorded
+            compact_time_range(r.get('time_range')), _num(hrs) if hrs else '',
             r.get('days') or '', r.get('room') or '', r.get('effectivity') or '']
 
 
 
 
+def _sum_units(rows):
+    total = 0.0
+    for r in rows:
+        try:
+            total += float(r.get('units') or 0)
+        except (TypeError, ValueError):
+            pass
+    return round(total, 2)
+
+
+
+
+def _sum_hours(rows):
+    return round(sum(_row_hours(r) for r in rows), 2)
+
+
+
+
+TOTAL_HOURS_LABEL = 'Total HOURS'
+
+
 def _sections(d):
-    t = d.get('totals') or {}
-    out = [('REGULAR LOAD', d.get('regular') or [], 'Total REGULAR LOAD', t.get('regularUnits')),
-           ('PART-TIME', d.get('partTime') or [], 'Total PART-TIME', t.get('partTimeUnits'))]
+    """(title, rows, total label, total units = sum of the UNITS column,
+    total hours = sum of the NO. OF HRS column)."""
+    secs = [('REGULAR LOAD', d.get('regular') or [], 'Total REGULAR LOAD'),
+            ('PART-TIME', d.get('partTime') or [], 'Total PART-TIME')]
     # Classes past the Regular / Part-time caps are Teaching Substitution: listed in their
     # own section (only when there are any), so the form shows every assigned class.
     if d.get('ts'):
-        out.append(('TEACHING SUBSTITUTION (TS)', d['ts'], 'Total TEACHING SUBSTITUTION (TS)', t.get('tsUnits')))
-    return out
+        secs.append(('TEACHING SUBSTITUTION (TS)', d['ts'], 'Total TEACHING SUBSTITUTION (TS)'))
+    return [(title, rows, lbl, _sum_units(rows), _sum_hours(rows)) for title, rows, lbl in secs]
 
 
 
@@ -209,8 +317,12 @@ def _per_day_rows(d):
 
 
 
-def _official_rows():
-    return [['OFFICIAL TIME'] + [''] * 7, ['ADVISING TIME'] + [''] * 7]
+def _official_rows(d=None):
+    """OFFICIAL TIME = the faculty's class time blocks per day (one per line);
+    ADVISING TIME stays blank for hand-filling."""
+    ot = (d or {}).get('official_time') or {}
+    return [['OFFICIAL TIME'] + ['\n'.join(ot.get(day) or []) for day in DAYS],
+            ['ADVISING TIME'] + [''] * 7]
 
 
 
@@ -254,13 +366,13 @@ def gen_csv(d, logo_path=None):
         w.writerow([])
         for a, b, c, e in _info_rows(d):
             w.writerow([a, b, c, e])
-        for title, rows, total_lbl, total in _sections(d):
+        for title, rows, total_lbl, total, total_hrs in _sections(d):
             w.writerow([])
             w.writerow([title])
             w.writerow(LOAD_HEADERS)
             for r in rows:
                 w.writerow(_load_row(r))
-            w.writerow([total_lbl, _num(total)])
+            w.writerow([total_lbl, _num(total), TOTAL_HOURS_LABEL, _num(total_hrs)])
         if _ts_line(d):
             w.writerow([_ts_line(d)[0], _num(_ts_line(d)[1])])
         w.writerow([])
@@ -271,8 +383,8 @@ def gen_csv(d, logo_path=None):
         w.writerow([])
         w.writerow(['OFFICIAL TIME / ADVISING TIME'])
         w.writerow([''] + DAY_HEADERS)
-        for row in _official_rows():
-            w.writerow(row)
+        for row in _official_rows(d):
+            w.writerow([v.replace('\n', ' / ') for v in row])
         w.writerow([])
         w.writerow([LEGEND])
     return out.getvalue().encode('utf-8-sig')
@@ -352,7 +464,7 @@ def gen_xlsx(d, logo_path=None):
         rn += 1
 
 
-        for title, rows, total_lbl, total in _sections(d):
+        for title, rows, total_lbl, total, total_hrs in _sections(d):
             ws.cell(rn, 1, title).font = Font(bold=True, size=10)
             rn += 1
             for ci, h in enumerate(LOAD_HEADERS, 1):
@@ -361,12 +473,20 @@ def gen_xlsx(d, logo_path=None):
             for i in range(max(len(rows), MIN_LOAD_ROWS)):
                 vals = _load_row(rows[i]) if i < len(rows) else [''] * N
                 for ci, v in enumerate(vals):
-                    c = ws.cell(rn, ci + 1, _xl_num(rows[i].get('units')) if (ci == 2 and i < len(rows)) else v)
+                    if i < len(rows) and ci == 2:
+                        v = _xl_num(rows[i].get('units'))
+                    elif i < len(rows) and ci == HOURS_COL and v != '':
+                        v = _xl_num(v)
+                    c = ws.cell(rn, ci + 1, v)
                     c.font = Font(size=8); c.border = brd
                     c.alignment = center if ci in LOAD_CENTER else left
                 rn += 1
+            # Totals sit under their own columns: units under UNITS, hours under NO. OF HRS.
             ws.cell(rn, 1, total_lbl).font = Font(bold=True, size=9)
             c = ws.cell(rn, 3, _xl_num(total)); c.font = Font(bold=True, size=9); c.alignment = center
+            c = ws.cell(rn, HOURS_COL, TOTAL_HOURS_LABEL); c.font = Font(bold=True, size=9)
+            c.alignment = Alignment(horizontal='right', vertical='center')
+            c = ws.cell(rn, HOURS_COL + 1, _xl_num(total_hrs)); c.font = Font(bold=True, size=9); c.alignment = center
             rn += 2
         ts = _ts_line(d)
         if ts:
@@ -377,7 +497,7 @@ def gen_xlsx(d, logo_path=None):
 
         # Day grids: label A-B | MON..SUN in C..I
         for grid_title, grid_rows, height in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), 16),
-                                              ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 30)):
+                                              ('OFFICIAL TIME / ADVISING TIME', _official_rows(d), 30)):
             merged(rn, 1, 9, grid_title, Font(bold=True, size=10))
             rn += 1
             merged(rn, 1, 2, '', border=True)
@@ -389,7 +509,8 @@ def gen_xlsx(d, logo_path=None):
                 for i, v in enumerate(row[1:]):
                     c = ws.cell(rn, 3 + i, _xl_num(v) if v != '' else '')
                     c.font = Font(bold=(row[0] == 'TOTAL'), size=8); c.border = brd; c.alignment = center
-                ws.row_dimensions[rn].height = height
+                lines = max([str(v).count('\n') + 1 for v in row[1:]] + [1])
+                ws.row_dimensions[rn].height = max(height, 16 * lines)
                 rn += 1
             rn += 1
 
@@ -490,7 +611,7 @@ def gen_docx(d, logo_path=None):
         _widths(info, [2.4, 6.9, 2.4, 6.9])
 
 
-        for title, rows, total_lbl, total in _sections(d):
+        for title, rows, total_lbl, total, total_hrs in _sections(d):
             _para(title, sz=9, before=8)
             n_rows = max(len(rows), MIN_LOAD_ROWS)
             tbl = doc.add_table(rows=1 + n_rows, cols=len(LOAD_HEADERS))
@@ -504,7 +625,7 @@ def gen_docx(d, logo_path=None):
                 for ci, v in enumerate(vals):
                     _cell(cells[ci], v, sz=7,
                           align=WD_ALIGN_PARAGRAPH.CENTER if ci in LOAD_CENTER else WD_ALIGN_PARAGRAPH.LEFT)
-            _para(f"{total_lbl}   {_num(total)}", sz=8, before=2)
+            _para(f"{total_lbl}   {_num(total)}          {TOTAL_HOURS_LABEL}   {_num(total_hrs)}", sz=8, before=2)
         ts = _ts_line(d)
         if ts:
             _para(f"{ts[0]}   {_num(ts[1])}", sz=8, before=2)
@@ -512,7 +633,7 @@ def gen_docx(d, logo_path=None):
 
         grid_w = [3.0] + [2.2] * 7
         for grid_title, grid_rows in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d)),
-                                      ('OFFICIAL TIME / ADVISING TIME', _official_rows())):
+                                      ('OFFICIAL TIME / ADVISING TIME', _official_rows(d))):
             _para(grid_title, sz=9, align=WD_ALIGN_PARAGRAPH.CENTER, before=8)
             g = doc.add_table(rows=1 + len(grid_rows), cols=8)
             g.style = 'Table Grid'; g.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -585,7 +706,7 @@ def gen_pdf(d, logo_path=None):
 
 
     def P(v, st):
-        return Paragraph(_esc(str(v)) if v not in (None, '') else '&nbsp;', st)
+        return Paragraph(_esc(str(v)).replace('\n', '<br/>') if v not in (None, '') else '&nbsp;', st)
 
 
     FULL = sum(LOAD_COL_CM) * cm
@@ -618,7 +739,7 @@ def gen_pdf(d, logo_path=None):
         story.append(info)
 
 
-        for title, rows, total_lbl, total in _sections(d):
+        for title, rows, total_lbl, total, total_hrs in _sections(d):
             data = [[P(h, hdr) for h in LOAD_HEADERS]]
             for i in range(max(len(rows), MIN_LOAD_ROWS)):
                 vals = _load_row(rows[i]) if i < len(rows) else [''] * len(LOAD_HEADERS)
@@ -627,7 +748,9 @@ def gen_pdf(d, logo_path=None):
                         rowHeights=[None] + [0.5*cm if i >= len(rows) else None for i in range(len(data) - 1)])
             tbl.setStyle(TableStyle(grid))
             story.append(KeepTogether([Paragraph(title, sec), tbl,
-                                       Paragraph(f"{_esc(total_lbl)}&nbsp;&nbsp;&nbsp;{_esc(_num(total))}", total_s)]))
+                                       Paragraph(f"{_esc(total_lbl)}&nbsp;&nbsp;&nbsp;{_esc(_num(total))}"
+                                                 f"{'&nbsp;' * 12}{_esc(TOTAL_HOURS_LABEL)}&nbsp;&nbsp;&nbsp;"
+                                                 f"{_esc(_num(total_hrs))}", total_s)]))
         ts = _ts_line(d)
         if ts:
             story.append(Paragraph(f"{_esc(ts[0])}&nbsp;&nbsp;&nbsp;{_esc(_num(ts[1]))}", total_s))
@@ -635,7 +758,7 @@ def gen_pdf(d, logo_path=None):
 
         day_w = [3.0*cm] + [(FULL - 3.0*cm) / 7] * 7
         for grid_title, grid_rows, row_h in (('TEACHING LOAD PER DAY (HOURS)', _per_day_rows(d), None),
-                                             ('OFFICIAL TIME / ADVISING TIME', _official_rows(), 0.85*cm)):
+                                             ('OFFICIAL TIME / ADVISING TIME', _official_rows(d), 0.85*cm)):
             data = [[P('', cell_c)] + [P(h, hdr) for h in DAY_HEADERS]]
             for row in grid_rows:
                 st = bold_c if row[0] == 'TOTAL' else cell_c
