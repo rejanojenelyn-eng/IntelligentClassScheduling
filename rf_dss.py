@@ -222,446 +222,524 @@ def resolve_faculty_names(cur, raw_names):
             }
     return out
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Supervised Random Forest recommender
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Learning problem (one classifier for faculty, one for rooms):
+#
+#   For every past term T and every subject offering o scheduled in T, each
+#   candidate c (a faculty member who taught in T / a room in the Room master)
+#   becomes one training row:
+#
+#       x = features(o, c | history strictly BEFORE T)
+#       y = 1 if c was the faculty/room actually assigned to o in T, else 0
+#
+#   The label is the real historical outcome, not a formula of the features, and
+#   features never look at T itself or anything after it (time-ordered training,
+#   no leakage). At recommendation time the features are computed from ALL history
+#   and every active faculty member / room is scored with P(y = 1); candidates are
+#   ranked by that probability. Because the features include program/year-level,
+#   subject-prefix and subject-name similarity signals, the model can recommend a
+#   faculty member or room even for a pairing never seen before (cold start).
+
+from collections import Counter as _Counter, defaultdict as _defaultdict
+import random as _random
+
+try:
+    from sklearn.ensemble import RandomForestClassifier as _RFC
+except ImportError:  # SKLEARN_OK already False in that case
+    _RFC = None
+
+# Hyperparameters, selected on the AY2024–25 validation term (see thesis Ch.3).
+# Evaluation harnesses may override these dicts; production never does.
+# 18-setting grid (trees {100,300} x depth {8,12,None} x leaf {1,3,5}); rule =
+# highest validation MRR per model. Faculty: val Top-3 76.75%, MRR 0.6469.
+# Room: val Top-3 69.52%, MRR 0.5438.
+RF_FAC_PARAMS  = {'n_estimators': 100, 'max_depth': 8, 'min_samples_leaf': 3,
+                  'class_weight': None}
+RF_ROOM_PARAMS = {'n_estimators': 300, 'max_depth': 8, 'min_samples_leaf': 1,
+                  'class_weight': None}
+RF_RANDOM_STATE = 42
+# Negative sampling: every "related" negative is kept; this many unrelated
+# candidates are sampled per offering (keeps training fast and balanced).
+RF_EASY_NEGATIVES = 10
+
+# Faculty-profile specialization as model input (Faculty.SpecializationID):
+#   None       - not used
+#   'rule'     - the scheduler's fixed specialization/subject-prefix rule (0/1)
+#   'affinity' - learned from history: share of this subject's / prefix's past
+#                assignments taught by faculty with the candidate's specialization
+RF_SPEC_MODE = None
+
+SPEC_FEATURES = {
+    None:       [],
+    'rule':     ['spec_rule_match',        # _spec_matches_subject(profile spec, subject)
+                 'has_specialization'],
+    'affinity': ['spec_subject_affinity',  # same-specialization share of the subject's history
+                 'spec_prefix_affinity',   # same-specialization share of the prefix's history
+                 'has_specialization'],
+}
+
+
+def fac_feature_names():
+    return FAC_FEATURES + SPEC_FEATURES[RF_SPEC_MODE]
+
+
+FAC_FEATURES = [
+    'subj_count',          # times this faculty taught this subject
+    'subj_share',          # share of the subject's past offerings taught by them
+    'subj_specialization', # subj_count / faculty's total offerings
+    'subj_recency',        # 1/(1+terms since they last taught it); 0 = never
+    'prefix_count',        # offerings with the same subject-code prefix (e.g. COMP)
+    'prefix_ratio',
+    'program_count',       # offerings taught in the same program
+    'program_ratio',
+    'program_year_count',  # offerings taught in the same program + year level
+    'total_offerings',
+    'activity_recency',    # 1/(1+terms since they last taught anything)
+    'distinct_subjects',
+    'name_similarity',     # max word overlap with other subjects they taught
+    'subject_history',     # how many past offerings the subject has (context)
+    'subject_faculty_pool',# how many faculty ever taught the subject (context)
+    'is_lab_subject',
+]
+ROOM_FEATURES = [
+    'subj_count',          # times this room hosted this subject
+    'subj_share',
+    'subj_recency',
+    'program_year_count',  # times it hosted this program + year level
+    'program_count',
+    'program_share',
+    'prefix_count',
+    'room_total',
+    'prev_term_same_group',   # used by this program+year level last regular term
+    'prev_term_cohort',       # used by the same cohort (year level - 1) last regular term
+    'room_is_lab',
+    'is_lab_subject',
+    'lab_type_match',
+    'program_floor_share',    # share of the program's classes on this room's floor
+]
+
+_STOP = {'AND', 'THE', 'OF', 'NG', 'SA', 'FOR', 'IN', 'TO', 'WITH', 'AT', 'ANG', 'MGA'}
+_SEM_ORDER = {'A': 1, 'B': 2, 'C': 3}
+
+
+def _words(name):
+    return frozenset(w for w in _re.findall(r'[A-Z]+', (name or '').upper())
+                     if len(w) > 2 and w not in _STOP)
+
+
+def _prefix(sc):
+    m = _re.match(r'[A-Z]+', sc or '')
+    return m.group(0) if m else (sc or '')
+
+
+def _room_key(name):
+    return _re.sub(r'[^A-Z0-9]', '', (name or '').upper())
+
+
+def _room_floor(key):
+    m = _re.match(r'[A-Z]+(\d)', key or '')
+    return int(m.group(1)) if m else -1
+
+
+def _norm_prog(p):
+    return _re.sub(r'\s+\d+$', '', (p or '').strip()).upper()
+
+
+def _to_int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _spec_rule(spec_name, subject_code):
+    """The scheduler's specialization rule (imported lazily: scheduler is heavy)."""
+    from scheduler import _spec_matches_subject
+    return _spec_matches_subject(spec_name or '', (subject_code or '').upper())
+
+
+def _load_fac_specs(cur):
+    cur.execute("""
+        SELECT CAST(f.EmployeeNumber AS TEXT) AS empnum,
+               TRIM(COALESCE(s.SpecializationName, '')) AS spec
+        FROM Faculty f LEFT JOIN Specialization s ON s.SpecializationID = f.SpecializationID
+    """)
+    return {r['empnum']: r['spec'] for r in cur.fetchall() or []}
+
+
+def _recency(gap):
+    return 1.0 / (1.0 + gap) if gap is not None and gap >= 0 else 0.0
+
+
+class _History:
+    """Cumulative assignment statistics up to (not including) the current term."""
+
+    def __init__(self):
+        self.fs = _Counter(); self.fs_last = {}
+        self.fp = _Counter(); self.fprog = _Counter(); self.fpy = _Counter()
+        self.ftot = _Counter(); self.f_last = {}
+        self.f_subj = _defaultdict(set)
+        self.s_tot = _Counter(); self.s_fac = _defaultdict(set)
+        self.rs = _Counter(); self.rs_last = {}
+        self.rpy = _Counter(); self.rprog = _Counter(); self.rp = _Counter()
+        self.rtot = _Counter(); self.s_rtot = _Counter()
+        self.prog_rtot = _Counter(); self.prog_floor = _Counter()
+        self.prev_reg_rpy = _Counter()
+        self.sc_words = {}
+        self.sc_lab = {}
+        self.fac_spec = {}            # empnum -> profile specialization ('' = none)
+        self.spec_s = _Counter(); self.spec_p = _Counter()
+        self.s_assign = _Counter(); self.p_assign = _Counter()
+
+    def add_term(self, idx, offerings, regular, room_floor):
+        term_rpy = _Counter()
+        for o in offerings:
+            sc, pfx, prog, yl = o['sc'], o['pfx'], o['prog'], o['yl']
+            for f in o['emps']:
+                sp = self.fac_spec.get(f, '')
+                self.s_assign[sc] += 1; self.p_assign[pfx] += 1
+                if sp:
+                    self.spec_s[(sp, sc)] += 1; self.spec_p[(sp, pfx)] += 1
+                self.fs[(f, sc)] += 1; self.fs_last[(f, sc)] = idx
+                self.fp[(f, pfx)] += 1; self.fprog[(f, prog)] += 1
+                self.fpy[(f, prog, yl)] += 1; self.ftot[f] += 1
+                self.f_last[f] = idx; self.f_subj[f].add(sc)
+                self.s_fac[sc].add(f)
+            if o['emps']:
+                self.s_tot[sc] += 1
+            for r in o['rooms']:
+                self.rs[(r, sc)] += 1; self.rs_last[(r, sc)] = idx
+                self.rpy[(r, prog, yl)] += 1; self.rprog[(r, prog)] += 1
+                self.rp[(r, pfx)] += 1; self.rtot[r] += 1
+                self.prog_rtot[prog] += 1
+                self.prog_floor[(prog, room_floor.get(r, -1))] += 1
+                term_rpy[(r, prog, yl)] += 1
+            if o['rooms']:
+                self.s_rtot[sc] += 1
+            if o['words']:
+                self.sc_words[sc] = o['words']
+            self.sc_lab[sc] = self.sc_lab.get(sc, False) or o['lab']
+        if regular:
+            self.prev_reg_rpy = term_rpy
+
+    # ── feature vectors ─────────────────────────────────────────────────────
+    def fac_features(self, idx, sc, pfx, words, prog, yl, lab, f, sim_cache, raw_code=''):
+        base = self._fac_base(idx, sc, pfx, words, prog, yl, lab, f, sim_cache)
+        if RF_SPEC_MODE is None:
+            return base
+        sp = self.fac_spec.get(f, '')
+        if RF_SPEC_MODE == 'rule':
+            return base + [1.0 if _spec_rule(sp, raw_code or sc) else 0.0, 1.0 if sp else 0.0]
+        return base + [
+            self.spec_s.get((sp, sc), 0) / max(self.s_assign.get(sc, 0), 1) if sp else 0.0,
+            self.spec_p.get((sp, pfx), 0) / max(self.p_assign.get(pfx, 0), 1) if sp else 0.0,
+            1.0 if sp else 0.0,
+        ]
+
+    def _fac_base(self, idx, sc, pfx, words, prog, yl, lab, f, sim_cache):
+        n_subj = self.fs.get((f, sc), 0)
+        tot = self.ftot.get(f, 0)
+        totd = max(tot, 1)
+        last = self.fs_last.get((f, sc))
+        flast = self.f_last.get(f)
+        key = (f, sc)
+        sim = sim_cache.get(key)
+        if sim is None:
+            sim = 0.0
+            if words:
+                for g in self.f_subj.get(f, ()):
+                    if g == sc:
+                        continue
+                    gw = self.sc_words.get(g)
+                    if gw:
+                        j = len(words & gw) / len(words | gw)
+                        if j > sim:
+                            sim = j
+            sim_cache[key] = sim
+        n_pfx = self.fp.get((f, pfx), 0)
+        n_prog = self.fprog.get((f, prog), 0)
+        return [
+            float(n_subj),
+            n_subj / max(self.s_tot.get(sc, 0), 1),
+            n_subj / totd,
+            _recency(idx - last) if last is not None else 0.0,
+            float(n_pfx),
+            n_pfx / totd,
+            float(n_prog),
+            n_prog / totd,
+            float(self.fpy.get((f, prog, yl), 0)),
+            float(tot),
+            _recency(idx - flast) if flast is not None else 0.0,
+            float(len(self.f_subj.get(f, ()))),
+            sim,
+            float(self.s_tot.get(sc, 0)),
+            float(len(self.s_fac.get(sc, ()))),
+            1.0 if lab else 0.0,
+        ]
+
+    def room_features(self, idx, sc, pfx, prog, yl, lab, r, r_is_lab, r_floor):
+        n_subj = self.rs.get((r, sc), 0)
+        last = self.rs_last.get((r, sc))
+        n_prog = self.rprog.get((r, prog), 0)
+        ptot = self.prog_rtot.get(prog, 0)
+        return [
+            float(n_subj),
+            n_subj / max(self.s_rtot.get(sc, 0), 1),
+            _recency(idx - last) if last is not None else 0.0,
+            float(self.rpy.get((r, prog, yl), 0)),
+            float(n_prog),
+            n_prog / max(ptot, 1),
+            float(self.rp.get((r, pfx), 0)),
+            float(self.rtot.get(r, 0)),
+            float(self.prev_reg_rpy.get((r, prog, yl), 0)),
+            float(self.prev_reg_rpy.get((r, prog, (yl - 1) if yl is not None else None), 0)),
+            1.0 if r_is_lab else 0.0,
+            1.0 if lab else 0.0,
+            1.0 if bool(r_is_lab) == bool(lab) else 0.0,
+            self.prog_floor.get((prog, r_floor), 0) / max(ptot, 1),
+        ]
+
 
 # ── Module-level cache ────────────────────────────────────────────────────────
 
 _rf_fac_model       = None
 _rf_room_model      = None
-# Primary index: (norm_sc, empnum_str) → stats dict
-_rf_fac_stats       = {}
-# Fallback index: (norm_sc, UPPER_INST_NAME) → stats dict
-# Only populated for unresolved names that are NOT ambiguous.
-_rf_fac_name_stats  = {}
-# Names that resolved to multiple possible faculty — never used for inference.
+_rf_hist            = None     # _History over ALL terms (inference state)
+_rf_next_idx        = 0        # term index of "the term being scheduled"
+_rf_rooms           = {}       # room_key -> {'is_lab': bool, 'floor': int}
+_rf_train_info      = {}       # sizes / class balance, for reports and tests
 _rf_ambiguous_names = set()
-_rf_room_stats      = {}
 
 # Wall-clock time of the last successful training run (see train_rf_dss).
 _rf_trained_at      = 0.0
 
 # How long a trained model stays in cache before the next /api/dss/suggest
-# call triggers a retrain. Keeps Manual Editor recommendations from silently
-# going stale for the lifetime of the server process after new historical
-# data is imported or new schedules are published, without requiring every
-# write path that touches historical_data/schedule to remember to call
-# reset_rf_cache() explicitly.
+# call triggers a retrain, so new historical imports / published schedules are
+# picked up without every write path having to call reset_rf_cache().
 RF_CACHE_TTL_SECONDS = 15 * 60
+
+
+# ── Data loading ──────────────────────────────────────────────────────────────
+
+def _load_rooms(cur):
+    cur.execute("SELECT RoomName, COALESCE(RoomType, 'Lecture') AS roomtype FROM Room")
+    rooms = {}
+    for r in cur.fetchall() or []:
+        k = _room_key(r['roomname'])
+        if k:
+            rooms[k] = {'is_lab': (r['roomtype'] or '') == 'Laboratory', 'floor': _room_floor(k)}
+    return rooms
+
+
+def _map_rooms(raw, rooms):
+    """Historical room text -> list of Room-master keys ('TBA'/unknown -> [])."""
+    raw = (raw or '').upper().strip()
+    if not raw:
+        return []
+    k = _room_key(raw)
+    if k in rooms:
+        return [k]
+    if '/' in raw:
+        return [p for p in (_room_key(x) for x in raw.split('/')) if p in rooms]
+    return []
+
+
+def _load_events(cur, rooms):
+    """All past assignments as uniform event dicts, from historical_data plus
+    Published schedule-table terms that are not already in historical_data."""
+    name_to_empnum, ambiguous = _build_name_to_empnum(cur)
+    events = []
+    cur.execute("""
+        SELECT h.academicyearid AS ay, COALESCE(s.semestertype, '') AS sem,
+               REGEXP_REPLACE(UPPER(TRIM(h."Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
+               UPPER(TRIM(h."Subject Code")) AS raw, h."Subject Name" AS sname, COALESCE(h."Laboratory Hours", 0) AS labh,
+               h."Program" AS prog, h."Year Level" AS yl, h.sectionid, h."Course" AS course,
+               UPPER(TRIM(COALESCE(h."Instructor", ''))) AS inst,
+               NULLIF(TRIM(COALESCE(h.employeenumber, '')), '') AS emp,
+               h."Room" AS room
+        FROM historical_data h
+        LEFT JOIN semester s ON s.semesterid = h.semesterid
+        WHERE h."Subject Code" IS NOT NULL AND TRIM(h."Subject Code") != ''
+          AND h.academicyearid IS NOT NULL AND TRIM(h.academicyearid) != ''
+    """)
+    for r in cur.fetchall() or []:
+        emp = r['emp'] or (name_to_empnum.get(r['inst']) if r['inst'] not in ambiguous else None)
+        events.append({
+            'ay': r['ay'], 'sem': (r['sem'] or '').upper(), 'sc': r['sc'], 'raw': r['raw'],
+            'sname': r['sname'], 'lab': (r['labh'] or 0) > 0,
+            'prog': _norm_prog(r['prog']), 'yl': _to_int(r['yl']),
+            'sect': r['sectionid'] if r['sectionid'] is not None else ('C', (r['course'] or '').upper()),
+            'emp': str(emp) if emp else None,
+            'rooms': _map_rooms(r['room'], rooms),
+        })
+    hist_terms = {(e['ay'], e['sem']) for e in events}
+
+    try:
+        cur.execute("""
+            SELECT sm.academicyearid AS ay, COALESCE(sm.semestertype, '') AS sem,
+                   REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
+                   UPPER(TRIM(cs.subjectcode)) AS raw, cs.subjectname AS sname, COALESCE(cs.laboratoryhours, 0) AS labh,
+                   pyl.programcode AS prog, pyl.yearlevel AS yl, sch.sectionid,
+                   CAST(sch.employeenumber AS TEXT) AS emp, r.roomname AS room
+            FROM schedule sch
+            JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
+            JOIN semester sm          ON sch.semesterid = sm.semesterid
+            JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
+            LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+            LEFT JOIN room r               ON r.roomid = ss.roomid
+            LEFT JOIN sections sec          ON sch.sectionid = sec.sectionid
+            LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
+            WHERE sv.status IN ('Published', 'Archive')
+              AND COALESCE(sv.original_status, sv.status) <> 'Draft'
+              AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
+        """)
+        for r in cur.fetchall() or []:
+            if (r['ay'], (r['sem'] or '').upper()) in hist_terms:
+                continue
+            events.append({
+                'ay': r['ay'], 'sem': (r['sem'] or '').upper(), 'sc': r['sc'], 'raw': r['raw'],
+                'sname': r['sname'], 'lab': (r['labh'] or 0) > 0,
+                'prog': _norm_prog(r['prog']), 'yl': _to_int(r['yl']),
+                'sect': r['sectionid'], 'emp': r['emp'] or None,
+                'rooms': [k for k in [_room_key(r['room'])] if k in rooms],
+            })
+    except Exception:
+        cur.connection.rollback()
+    return events, ambiguous
+
+
+def _group_terms(events):
+    """events -> chronologically sorted [(term, [offering, ...])].
+    An offering = one (section, subject) in a term; lecture/lab rows are merged."""
+    by_term = _defaultdict(dict)
+    for e in events:
+        term = (e['ay'], e['sem'])
+        okey = (e['sect'], e['sc'])
+        o = by_term[term].get(okey)
+        if o is None:
+            o = by_term[term][okey] = {
+                'sc': e['sc'], 'raw': e['raw'], 'pfx': _prefix(e['sc']), 'prog': e['prog'], 'yl': e['yl'],
+                'words': _words(e['sname']), 'lab': False, 'emps': set(), 'rooms': set()}
+        o['lab'] = o['lab'] or e['lab']
+        if e['emp']:
+            o['emps'].add(e['emp'])
+        o['rooms'].update(e['rooms'])
+        if not o['words'] and e['sname']:
+            o['words'] = _words(e['sname'])
+    order = sorted(by_term, key=lambda t: (_ay_to_int(t[0]), _SEM_ORDER.get(t[1], 0)))
+    out = []
+    for t in order:
+        offs = sorted(by_term[t].values(), key=lambda o: (o['sc'], o['prog'], o['yl'] or 0,
+                                                          sorted(o['emps']), sorted(o['rooms'])))
+        out.append((t, offs))
+    return out
+
+
+def _build_training_set(terms, rooms, fac_spec=None):
+    hist = _History()
+    hist.fac_spec = fac_spec or {}
+    room_floor = {k: v['floor'] for k, v in rooms.items()}
+    room_keys = sorted(rooms)
+    Xf, yf, Xr, yr = [], [], [], []
+    for idx, (term, offs) in enumerate(terms):
+        if idx > 0:
+            rng = _random.Random(RF_RANDOM_STATE * 1000 + idx)
+            pool = sorted({f for o in offs for f in o['emps']})
+            sim_cache = {}
+            for o in offs:
+                sc, pfx, prog, yl, lab = o['sc'], o['pfx'], o['prog'], o['yl'], o['lab']
+                words = o['words'] or hist.sc_words.get(sc, frozenset())
+                if o['emps']:
+                    hard, easy = [], []
+                    for f in pool:
+                        if f in o['emps']:
+                            continue
+                        if (hist.fs.get((f, sc)) or hist.fp.get((f, pfx))
+                                or hist.fpy.get((f, prog, yl))):
+                            hard.append(f)
+                        else:
+                            easy.append(f)
+                    negs = hard + (rng.sample(easy, RF_EASY_NEGATIVES)
+                                   if len(easy) > RF_EASY_NEGATIVES else easy)
+                    for f in sorted(o['emps']):
+                        Xf.append(hist.fac_features(idx, sc, pfx, words, prog, yl, lab, f, sim_cache, o['raw'])); yf.append(1)
+                    for f in negs:
+                        Xf.append(hist.fac_features(idx, sc, pfx, words, prog, yl, lab, f, sim_cache, o['raw'])); yf.append(0)
+                if o['rooms']:
+                    hard, easy = [], []
+                    for r in room_keys:
+                        if r in o['rooms']:
+                            continue
+                        if (hist.rs.get((r, sc)) or hist.rpy.get((r, prog, yl))
+                                or hist.rp.get((r, pfx)) or hist.prev_reg_rpy.get((r, prog, yl))):
+                            hard.append(r)
+                        else:
+                            easy.append(r)
+                    negs = hard + (rng.sample(easy, RF_EASY_NEGATIVES)
+                                   if len(easy) > RF_EASY_NEGATIVES else easy)
+                    for r in sorted(o['rooms']):
+                        Xr.append(hist.room_features(idx, sc, pfx, prog, yl, lab, r,
+                                                     rooms[r]['is_lab'], rooms[r]['floor'])); yr.append(1)
+                    for r in negs:
+                        Xr.append(hist.room_features(idx, sc, pfx, prog, yl, lab, r,
+                                                     rooms[r]['is_lab'], rooms[r]['floor'])); yr.append(0)
+        hist.add_term(idx, offs, term[1] in ('A', 'B'), room_floor)
+    return hist, Xf, yf, Xr, yr
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train_rf_dss():
-    """Build RF regressors from historical_data. Lazy-trained; cached for
-    RF_CACHE_TTL_SECONDS after each successful run (see module docstring)."""
-    global _rf_fac_model, _rf_room_model
-    global _rf_fac_stats, _rf_fac_name_stats, _rf_ambiguous_names, _rf_room_stats
-    global _rf_trained_at
+    """Train the faculty and room Random Forest classifiers on past assignment
+    outcomes. Lazy-trained; cached for RF_CACHE_TTL_SECONDS after each run."""
+    global _rf_fac_model, _rf_room_model, _rf_hist, _rf_next_idx, _rf_rooms
+    global _rf_train_info, _rf_ambiguous_names, _rf_trained_at
 
-    if not SKLEARN_OK:
+    if not SKLEARN_OK or _RFC is None:
         return
-    if _rf_fac_model is not None and (_time.time() - _rf_trained_at) < RF_CACHE_TTL_SECONDS:
+    if _rf_hist is not None and (_time.time() - _rf_trained_at) < RF_CACHE_TTL_SECONDS:
         return
 
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        rooms = _load_rooms(cur)
+        events, ambiguous = _load_events(cur, rooms)
+        terms = _group_terms(events)
+        fac_spec = _load_fac_specs(cur) if RF_SPEC_MODE else {}
+        hist, Xf, yf, Xr, yr = _build_training_set(terms, rooms, fac_spec)
 
-        # ── Step 1: Resolve historical instructor names to employee numbers ────
-        name_to_empnum, ambiguous_names = _build_name_to_empnum(cur)
-        _rf_ambiguous_names = ambiguous_names
+        fac_model = room_model = None
+        if len(set(yf)) == 2:
+            fac_model = _RFC(random_state=RF_RANDOM_STATE, n_jobs=-1, **RF_FAC_PARAMS)
+            fac_model.fit(_np.asarray(Xf, dtype=float), _np.asarray(yf))
+        if len(set(yr)) == 2:
+            room_model = _RFC(random_state=RF_RANDOM_STATE, n_jobs=-1, **RF_ROOM_PARAMS)
+            room_model.fit(_np.asarray(Xr, dtype=float), _np.asarray(yr))
 
-        # ── Step 2: Raw per-(subject, instructor-name) data from historical_data
-        cur.execute("""
-            SELECT
-                REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
-                UPPER(TRIM("Instructor"))                                           AS inst,
-                COUNT(*)                                                            AS exact_count,
-                MAX(COALESCE(academicyearid, ''))                                   AS latest_ay
-            FROM historical_data
-            WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-              AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
-            GROUP BY
-                REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g'),
-                UPPER(TRIM("Instructor"))
-        """)
-        raw_pairs = cur.fetchall() or []
-
-        # ── Step 3: Per-instructor-name aggregate stats (before merging by empnum)
-        cur.execute("""
-            SELECT
-                UPPER(TRIM("Instructor"))                                                         AS inst,
-                COUNT(*)                                                                          AS total_assignments,
-                COUNT(DISTINCT REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g')) AS distinct_subjects
-            FROM historical_data
-            WHERE "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
-              AND "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-            GROUP BY UPPER(TRIM("Instructor"))
-        """)
-        name_i_stats = {
-            r['inst']: {'total': int(r['total_assignments']), 'distinct': int(r['distinct_subjects'])}
-            for r in (cur.fetchall() or [])
+        # Parallel fit, single-threaded predict: each request scores only ~150
+        # candidates, where thread start-up would cost more than the work itself.
+        for m in (fac_model, room_model):
+            if m is not None:
+                m.set_params(n_jobs=1)
+        _rf_fac_model, _rf_room_model = fac_model, room_model
+        _rf_hist, _rf_next_idx, _rf_rooms = hist, len(terms), rooms
+        _rf_ambiguous_names = ambiguous
+        _rf_train_info = {
+            'terms': [f'{t[0]}-{t[1]}' for t, _ in terms],
+            'faculty_rows': len(yf), 'faculty_positives': int(sum(yf)),
+            'room_rows': len(yr), 'room_positives': int(sum(yr)),
+            'spec_mode': RF_SPEC_MODE, 'faculty_features': fac_feature_names(),
+            'faculty_params': dict(RF_FAC_PARAMS), 'room_params': dict(RF_ROOM_PARAMS),
         }
-
-        # ── Step 4: Subject totals
-        cur.execute("""
-            SELECT
-                REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
-                COUNT(*) AS subject_total
-            FROM historical_data
-            WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-              AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
-            GROUP BY REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g')
-        """)
-        s_totals = {r['sc']: int(r['subject_total']) for r in (cur.fetchall() or [])}
-
-        # ── Step 5: Max AY for recency
-        cur.execute("SELECT COALESCE(MAX(academicyearid), '') AS max_ay FROM historical_data")
-        max_ay     = (cur.fetchone() or {}).get('max_ay', '')
-        max_ay_int = _ay_to_int(max_ay)
-        max_yr     = _ay_start_year(max_ay)
-
-        # ── Step 5b: Pull ALL teaching data from the schedule table ───────────
-        # historical_data is import-based and may lag behind the current system.
-        # The schedule table holds Published/Archive records with direct empnums.
-        # We fetch them here (before Step 6 so the updated max_ay is used for
-        # the recent-count threshold) and merge into buckets after Step 7.
-        schedule_pairs = []          # [{sc, empnum, sched_count, latest_ay}, …]
-        sched_i_raw    = {}          # empnum → {total, distinct}
-        sched_recent   = {}          # (sc, empnum) → recent_count
-        try:
-            # 5b-1: True global max AY (schedule table may be more recent than historical_data)
-            cur.execute("""
-                SELECT COALESCE(MAX(academicyearid), '') AS max_ay
-                FROM semester
-                WHERE academicyearid IS NOT NULL AND TRIM(academicyearid) != ''
-            """)
-            sched_max = (cur.fetchone() or {}).get('max_ay', '')
-            if sched_max and sched_max > max_ay:
-                max_ay     = sched_max
-                max_ay_int = _ay_to_int(max_ay)
-                max_yr     = _ay_start_year(max_ay)
-
-            # 5b-2: Per-(subject, empnum) assignment counts from schedule table
-            cur.execute("""
-                SELECT
-                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
-                    CAST(sch.employeenumber AS TEXT)                                    AS empnum,
-                    COUNT(*)                                                            AS sched_count,
-                    MAX(COALESCE(sm.academicyearid, ''))                               AS latest_ay
-                FROM schedule sch
-                JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
-                JOIN semester sm          ON sch.semesterid = sm.semesterid
-                WHERE sch.employeenumber IS NOT NULL
-                  AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
-                  AND sv.status IN ('Published', 'Archive')
-                GROUP BY
-                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g'),
-                    CAST(sch.employeenumber AS TEXT)
-            """)
-            schedule_pairs = cur.fetchall() or []
-
-            # 5b-3: Extend s_totals so subject_share denominators cover all years
-            cur.execute("""
-                SELECT
-                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
-                    COUNT(*) AS subject_total
-                FROM schedule sch
-                JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
-                WHERE sch.employeenumber IS NOT NULL
-                  AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
-                  AND sv.status IN ('Published', 'Archive')
-                GROUP BY REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g')
-            """)
-            for r in (cur.fetchall() or []):
-                s_totals[r['sc']] = s_totals.get(r['sc'], 0) + int(r['subject_total'])
-
-            # 5b-4: Per-empnum total assignment and specialization counts
-            cur.execute("""
-                SELECT
-                    CAST(sch.employeenumber AS TEXT) AS empnum,
-                    COUNT(*)                         AS total_assignments,
-                    COUNT(DISTINCT REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g'))
-                                                     AS distinct_subjects
-                FROM schedule sch
-                JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
-                WHERE sch.employeenumber IS NOT NULL
-                  AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
-                  AND sv.status IN ('Published', 'Archive')
-                GROUP BY CAST(sch.employeenumber AS TEXT)
-            """)
-            for r in (cur.fetchall() or []):
-                sched_i_raw[r['empnum']] = {
-                    'total':    int(r['total_assignments']),
-                    'distinct': int(r['distinct_subjects']),
-                }
-
-            # 5b-5: Counts from schedule across ALL available AYs (no recency cutoff)
-            cur.execute("""
-                SELECT
-                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
-                    CAST(sch.employeenumber AS TEXT)                                    AS empnum,
-                    COUNT(*)                                                            AS recent_count
-                FROM schedule sch
-                JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
-                JOIN schedule_version sv  ON sv.scheduleid = sch.scheduleid
-                WHERE sch.employeenumber IS NOT NULL
-                  AND cs.subjectcode IS NOT NULL AND TRIM(cs.subjectcode) != ''
-                  AND sv.status IN ('Published', 'Archive')
-                GROUP BY
-                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g'),
-                    CAST(sch.employeenumber AS TEXT)
-            """)
-            for r in (cur.fetchall() or []):
-                sched_recent[(r['sc'], r['empnum'])] = int(r['recent_count'])
-        except Exception:
-            pass
-
-        # ── Step 6: Counts per (sc, inst-name) across ALL years in historical data
-        raw_recent = {}
-        try:
-            cur.execute("""
-                SELECT
-                    REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
-                    UPPER(TRIM("Instructor"))                                           AS inst,
-                    COUNT(*)                                                            AS recent_count
-                FROM historical_data
-                WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-                  AND "Instructor"   IS NOT NULL AND TRIM("Instructor")   != ''
-                GROUP BY
-                    REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g'),
-                    UPPER(TRIM("Instructor"))
-            """)
-            raw_recent = {
-                (r['sc'], r['inst']): int(r['recent_count'])
-                for r in (cur.fetchall() or [])
-            }
-        except Exception:
-            pass
-
-        # ── Step 7: Merge raw name-based data → empnum-based buckets ──────────
-        #
-        # Each raw_pair row has an instructor name (inst).
-        # If inst resolves to an empnum, bucket by (sc, empnum).
-        # If inst is unambiguous but unresolved (no Faculty match), bucket by (sc, inst)
-        #   and mark as name-only (safe for name-based fallback lookup).
-        # If inst is ambiguous, skip — cannot safely attribute to one faculty.
-        #
-        # Merging is needed because the same faculty might appear under multiple name
-        # spellings in historical_data (e.g., 'SANTOS, J.' and 'SANTOS, JOSE').
-
-        # bucket key → aggregated fields
-        buckets     = {}   # key → {exact_count, latest_ay, inst_names: set}
-        bucket_type = {}   # key → 'id' | 'name'
-
-        for r in raw_pairs:
-            sc   = r['sc']
-            inst = r['inst']
-            cnt  = int(r['exact_count'])
-            ay   = r['latest_ay'] or ''
-
-            if inst in name_to_empnum:
-                empnum = name_to_empnum[inst]
-                key    = (sc, empnum)
-                btype  = 'id'
-            elif inst in ambiguous_names:
-                continue   # ambiguous — skip entirely
-            else:
-                # Unresolved but unambiguous name — keep as name-based bucket
-                key   = (sc, inst)
-                btype = 'name'
-
-            if key not in buckets:
-                buckets[key]     = {'exact_count': 0, 'latest_ay': '', 'inst_names': set()}
-                bucket_type[key] = btype
-            b = buckets[key]
-            b['exact_count'] += cnt
-            if ay > b['latest_ay']:
-                b['latest_ay'] = ay
-            b['inst_names'].add(inst)
-
-        # ── Step 7b: Merge schedule-table pairs into buckets ──────────────────
-        # These are keyed directly by empnum so no name resolution is needed.
-        for r in schedule_pairs:
-            sc     = r['sc']
-            empnum = r['empnum']
-            cnt    = int(r['sched_count'])
-            ay     = r['latest_ay'] or ''
-            key    = (sc, empnum)
-            if key in buckets:
-                b = buckets[key]
-                b['exact_count'] += cnt
-                if ay > b['latest_ay']:
-                    b['latest_ay'] = ay
-            else:
-                buckets[key]     = {'exact_count': cnt, 'latest_ay': ay, 'inst_names': set()}
-                bucket_type[key] = 'id'
-
-        # ── Step 8: Per-empnum aggregated instructor stats ────────────────────
-        #
-        # We need total_assignments and distinct_subjects per empnum (or name key).
-        # Strategy: sum total_assignments for all name variants that map to the same empnum.
-        # For distinct_subjects: use MAX across variants (avoids double-counting the same subjects).
-        empnum_i_stats = {}   # empnum_str → {'total', 'distinct'}
-        for inst, istats in name_i_stats.items():
-            if inst in ambiguous_names:
-                continue
-            key = name_to_empnum.get(inst, inst)   # empnum string or raw name
-            if key not in empnum_i_stats:
-                empnum_i_stats[key] = {'total': 0, 'distinct': 0}
-            empnum_i_stats[key]['total']    += istats['total']
-            empnum_i_stats[key]['distinct']  = max(
-                empnum_i_stats[key]['distinct'], istats['distinct']
-            )
-
-        # ── Step 8b: Merge schedule-based instructor totals ───────────────────
-        for empnum, si in sched_i_raw.items():
-            if empnum not in empnum_i_stats:
-                empnum_i_stats[empnum] = {'total': 0, 'distinct': 0}
-            empnum_i_stats[empnum]['total']    += si['total']
-            empnum_i_stats[empnum]['distinct']  = max(
-                empnum_i_stats[empnum]['distinct'], si['distinct']
-            )
-
-        # ── Step 9: Per-(sc, empnum) recent counts ────────────────────────────
-        empnum_recent = {}   # (sc, empnum_or_name) → recent_count
-        for (sc, inst), cnt in raw_recent.items():
-            if inst in ambiguous_names:
-                continue
-            key = (sc, name_to_empnum.get(inst, inst))
-            empnum_recent[key] = empnum_recent.get(key, 0) + cnt
-
-        # ── Step 9b: Merge schedule-based recent counts ───────────────────────
-        for (sc, empnum), cnt in sched_recent.items():
-            key = (sc, empnum)
-            empnum_recent[key] = empnum_recent.get(key, 0) + cnt
-
-        # ── Step 10: Subject-code prefix affinity per empnum ──────────────────
-        empnum_prefix = {}   # empnum_or_name → {prefix → count}
-        for (sc, key), b in buckets.items():
-            pfx = sc[:2] if len(sc) >= 2 else sc
-            d   = empnum_prefix.setdefault(key if bucket_type[(sc, key)] == 'id' else key, {})
-            d[pfx] = d.get(pfx, 0) + b['exact_count']
-
-        # ── Step 11: Build feature vectors and train RF ───────────────────────
-        X_f, y_f    = [], []
-        id_fstats   = {}    # (norm_sc, empnum_str) → stats
-        name_fstats = {}    # (norm_sc, UPPER_NAME) → stats
-
-        for (sc, bucket_key), b in buckets.items():
-            btype       = bucket_type[(sc, bucket_key)]
-            exact_count = b['exact_count']
-            latest_ay   = b['latest_ay']
-
-            ist           = empnum_i_stats.get(bucket_key, {'total': 1, 'distinct': 1})
-            total_assign  = max(ist['total'], 1)
-            distinct_subj = max(ist['distinct'], 1)
-
-            subject_total = max(s_totals.get(sc, 1), 1)
-            recent_count  = empnum_recent.get((sc, bucket_key), 0)
-
-            exact_pct     = exact_count / total_assign
-            spec_ratio    = exact_pct
-            subject_share = exact_count / subject_total
-
-            inst_yr = _ay_start_year(latest_ay)
-            recency_score = (
-                max(0.0, 1.0 - (max_yr - inst_yr) / 10.0)
-                if max_yr > 0 and inst_yr > 0 else 0.0
-            )
-
-            recent_ratio  = recent_count / total_assign
-
-            pfx           = sc[:2] if len(sc) >= 2 else sc
-            prefix_total  = empnum_prefix.get(bucket_key, {}).get(pfx, 0)
-            related_ratio = prefix_total / total_assign
-
-            generalist_score = 1.0 / max(distinct_subj, 1)
-
-            feat = [
-                float(exact_count),   # F0 — exact subject match count (strongest signal)
-                exact_pct,            # F1 — fraction of instructor's history on this subject
-                spec_ratio,           # F2 — specialization ratio (alias of F1)
-                subject_share,        # F3 — instructor's share of all records for this subject
-                recency_score,        # F4 — 0–1; 1 = taught in most recent AY
-                float(recent_count),  # F5 — count in last 2 academic years
-                recent_ratio,         # F6 — F5 / total_assign
-                related_ratio,        # F7 — fraction of history sharing same code prefix
-                generalist_score,     # F8 — 1/distinct_subjects (high = specialist)
-            ]
-
-            # Specialist with high exact count scores higher than a generalist with same count.
-            # Recency is already captured as features F4–F6; keeping it out of the target
-            # prevents older faculty from being systematically suppressed by the label value.
-            target = _np.log1p(exact_count) * (1.0 + spec_ratio)
-
-            X_f.append(feat)
-            y_f.append(target)
-
-            entry = {
-                'feat':                 feat,
-                'exact_count':          exact_count,
-                'specialization_ratio': round(spec_ratio, 4),
-                'recent_count':         recent_count,
-                'latest_ay':            latest_ay,
-                'total_assign':         total_assign,
-            }
-
-            if btype == 'id':
-                id_fstats[(sc, bucket_key)] = entry
-            else:
-                name_fstats[(sc, bucket_key)] = entry
-
-        if len(X_f) >= 5:
-            _rf_fac_model = _RFR(n_estimators=100, random_state=42)
-            _rf_fac_model.fit(X_f, y_f)
-        _rf_fac_stats      = id_fstats
-        _rf_fac_name_stats = name_fstats
-
-        # ── Room RF (frequency-based, preserved) ─────────────────────────────
-        cur.execute("""
-            SELECT REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g') AS sc,
-                   UPPER(TRIM("Room")) AS room, COUNT(*) AS freq
-            FROM historical_data
-            WHERE "Subject Code" IS NOT NULL AND TRIM("Subject Code") != ''
-              AND "Room"         IS NOT NULL AND TRIM("Room")         != ''
-            GROUP BY REGEXP_REPLACE(UPPER(TRIM("Subject Code")), '[^A-Z0-9]', '', 'g'),
-                     UPPER(TRIM("Room"))
-        """)
-        room_pairs = cur.fetchall() or []
-
-        cur.execute("""
-            SELECT UPPER(TRIM("Room")) AS room, COUNT(*) AS total
-            FROM historical_data WHERE "Room" IS NOT NULL AND TRIM("Room") != ''
-            GROUP BY UPPER(TRIM("Room"))
-        """)
-        r_totals = {r['room']: int(r['total']) for r in (cur.fetchall() or [])}
-
-        X_r, y_r, rstats = [], [], {}
-        for r in room_pairs:
-            freq = int(r['freq']); sc = r['sc']; rm = r['room']
-            st   = max(s_totals.get(sc, 1), 1)
-            rt   = max(r_totals.get(rm, 1), 1)
-            feat = [freq, rt, st, freq / st]
-            X_r.append(feat)
-            y_r.append(_np.log1p(freq))
-            rstats[(sc, rm)] = feat
-
-        if len(X_r) >= 5:
-            _rf_room_model = _RFR(n_estimators=50, random_state=42)
-            _rf_room_model.fit(X_r, y_r)
-        _rf_room_stats = rstats
-
-        # Only stamp success once every step above has completed — a partial
-        # failure below leaves _rf_trained_at at its old value, so the next
-        # call retries immediately instead of waiting out a TTL on a
-        # possibly-stale or partially-trained model.
+        # Stamp success only after every step above completed, so a partial
+        # failure retries on the next call instead of caching a broken model.
         _rf_trained_at = _time.time()
-
     except Exception:
-        pass
+        conn.rollback()
     finally:
         cur.close()
         conn.close()
@@ -669,109 +747,110 @@ def train_rf_dss():
 
 def reset_rf_cache():
     """Discard trained models so the next request triggers a full retrain."""
-    global _rf_fac_model, _rf_room_model
-    global _rf_fac_stats, _rf_fac_name_stats, _rf_ambiguous_names, _rf_room_stats
-    global _rf_trained_at
-    _rf_fac_model       = None
-    _rf_room_model      = None
-    _rf_fac_stats       = {}
-    _rf_fac_name_stats  = {}
+    global _rf_fac_model, _rf_room_model, _rf_hist, _rf_next_idx, _rf_rooms
+    global _rf_train_info, _rf_ambiguous_names, _rf_trained_at
+    _rf_fac_model = _rf_room_model = None
+    _rf_hist = None
+    _rf_next_idx = 0
+    _rf_rooms = {}
+    _rf_train_info = {}
     _rf_ambiguous_names = set()
-    _rf_room_stats      = {}
-    _rf_trained_at      = 0.0
+    _rf_trained_at = 0.0
 
 
 # ── Inference & Explainability ────────────────────────────────────────────────
 
-def _lookup_fac_stats(norm_sc: str, employee_number=None, hist_name: str = None,
-                      instructor_name: str = None):
-    """
-    Resolve to a stats dict using this priority order:
-
-    1. (norm_sc, str(employee_number)) in _rf_fac_stats  ← primary; ID-based, no name ambiguity
-    2. (norm_sc, UPPER(hist_name))     in _rf_fac_name_stats, only if hist_name is NOT ambiguous
-    3. (norm_sc, UPPER(instructor_name)) same condition
-
-    Strategy (1) is always preferred because it uses the Faculty table's unique ID,
-    preventing histories of same-surname faculty from being attributed to the wrong person.
-    Strategies (2)/(3) apply only when the name is unambiguous (unique surname in Faculty table).
-    """
-    # 1. Primary: look up by employee number
-    if employee_number is not None:
-        stats = _rf_fac_stats.get((norm_sc, str(employee_number)))
-        if stats:
-            return stats
-
-    # 2/3. Fallback: unambiguous name-based keys (different index, different set)
-    for name in filter(None, [hist_name, instructor_name]):
-        key = name.upper().strip()
-        if key in _rf_ambiguous_names:
-            continue   # same-surname collision — do not use
-        stats = _rf_fac_name_stats.get((norm_sc, key))
-        if stats:
-            return stats
-
-    return None
+def _subject_context(subject_code, subject_name, is_lab):
+    sc = _norm_sc(subject_code or '')
+    words = _words(subject_name) if subject_name else frozenset()
+    if not words and _rf_hist is not None:
+        words = _rf_hist.sc_words.get(sc, frozenset())
+    if is_lab is None:
+        is_lab = bool(_rf_hist.sc_lab.get(sc)) if _rf_hist is not None else False
+    return sc, _prefix(sc), words, bool(is_lab)
 
 
-def rf_get_faculty_info(
-    subject_code: str,
-    instructor_name: str,
-    hist_name: str = None,
-    employee_number=None,
-) -> dict:
-    """
-    Score and explain a faculty candidate for a given subject.
-
-    Parameters
-    ----------
-    subject_code      Subject being scheduled (any format).
-    instructor_name   Name as stored in the Faculty table (display name).
-    hist_name         Raw string from historical_data."Instructor" (optional).
-    employee_number   Faculty.EmployeeNumber — primary lookup key when provided.
-
-    Returns
-    -------
-    dict with:
-      score          float  RF ranking score (0.0 when not in training data).
-      rf_explanation dict   Human-readable breakdown (present only when score > 0).
-    """
-    result = {'score': 0.0}
-    if _rf_fac_model is None:
-        return result
-
-    stats = _lookup_fac_stats(
-        _norm_sc(subject_code),
-        employee_number=employee_number,
-        hist_name=hist_name,
-        instructor_name=instructor_name,
-    )
-    if stats is None:
-        return result
-
-    result['score'] = float(_rf_fac_model.predict([stats['feat']])[0])
-
-    exact_count  = stats['exact_count']
-    spec_ratio   = stats['specialization_ratio']
-    recent_count = stats['recent_count']
-    latest_ay    = stats['latest_ay']
-
-    parts = [f"Taught {subject_code} {exact_count} time(s) in history."]
-    if spec_ratio > 0:
-        parts.append(f"{round(spec_ratio * 100, 1)}% of historical assignments are this subject.")
-    if recent_count > 0:
-        parts.append(f"Taught it {recent_count} time(s) in recent semesters.")
-    if latest_ay:
-        parts.append(f"Most recent assignment: {latest_ay}.")
-
-    result['rf_explanation'] = {
-        'exact_subject_match_count': exact_count,
-        'specialization_ratio':      spec_ratio,
-        'recent_count':              recent_count,
-        'latest_ay':                 latest_ay,
+def _fac_explanation(subject_code, feat, prob):
+    n, recency = int(feat[0]), feat[3]
+    parts = [f"Predicted assignment probability {prob * 100:.1f}%."]
+    if n:
+        parts.append(f"Taught {subject_code} {n} time(s) before.")
+        if recency:
+            gap = round(1 / recency - 1)
+            parts.append("Taught it last term." if gap <= 1 else f"Last taught it {gap} term(s) ago.")
+    else:
+        parts.append(f"Has not taught {subject_code} before.")
+        if feat[4]:
+            parts.append(f"Taught {int(feat[4])} related subject(s) with the same code prefix.")
+        if feat[12] >= 0.3:
+            parts.append("Taught a subject with a similar title.")
+    if feat[8]:
+        parts.append(f"Taught this program and year level {int(feat[8])} time(s).")
+    return {
+        'probability':               round(prob, 4),
+        'exact_subject_match_count': n,
+        'specialization_ratio':      round(feat[2], 4),
+        'related_prefix_count':      int(feat[4]),
+        'program_year_count':        int(feat[8]),
+        'name_similarity':           round(feat[12], 3),
         'explanation':               ' '.join(parts),
     }
-    return result
+
+
+def rf_rank_faculty(subject_code, employee_numbers, program=None, year_level=None,
+                    is_lab=None, subject_name=None):
+    """Score every candidate faculty member for one subject offering.
+
+    Returns {employee_number(str): {'score': P(assigned), 'rf_explanation': {...}}};
+    an empty dict when no model is trained."""
+    if _rf_fac_model is None or _rf_hist is None:
+        return {}
+    emps = [str(e) for e in employee_numbers if e is not None]
+    if not emps:
+        return {}
+    sc, pfx, words, lab = _subject_context(subject_code, subject_name, is_lab)
+    prog, yl = _norm_prog(program), _to_int(year_level)
+    cache = {}
+    X = [_rf_hist.fac_features(_rf_next_idx, sc, pfx, words, prog, yl, lab, e, cache,
+                               (subject_code or '').upper().strip()) for e in emps]
+    probs = _rf_fac_model.predict_proba(_np.asarray(X, dtype=float))[:, 1]
+    return {e: {'score': float(p), 'rf_explanation': _fac_explanation(subject_code, x, float(p))}
+            for e, x, p in zip(emps, X, probs)}
+
+
+def rf_rank_rooms(subject_code, room_names, program=None, year_level=None, is_lab=None):
+    """Score every candidate room for one subject offering.
+
+    Returns {room_name: P(assigned)}; rooms not in the Room master score 0.0;
+    an empty dict when no model is trained."""
+    if _rf_room_model is None or _rf_hist is None:
+        return {}
+    sc, pfx, _w, lab = _subject_context(subject_code, None, is_lab)
+    prog, yl = _norm_prog(program), _to_int(year_level)
+    names, X = [], []
+    out = {}
+    for name in room_names:
+        k = _room_key(name)
+        info = _rf_rooms.get(k)
+        if info is None:
+            out[name] = 0.0
+            continue
+        names.append(name)
+        X.append(_rf_hist.room_features(_rf_next_idx, sc, pfx, prog, yl, lab, k,
+                                        info['is_lab'], info['floor']))
+    if X:
+        probs = _rf_room_model.predict_proba(_np.asarray(X, dtype=float))[:, 1]
+        out.update({n: float(p) for n, p in zip(names, probs)})
+    return out
+
+
+def rf_get_faculty_info(subject_code: str, instructor_name: str, hist_name: str = None,
+                        employee_number=None, program=None, year_level=None) -> dict:
+    """Single-candidate wrapper around rf_rank_faculty (kept for older callers)."""
+    if employee_number is None:
+        return {'score': 0.0}
+    res = rf_rank_faculty(subject_code, [employee_number], program, year_level)
+    return res.get(str(employee_number), {'score': 0.0})
 
 
 def rf_score_faculty(subject_code: str, instructor_name: str,
@@ -780,9 +859,6 @@ def rf_score_faculty(subject_code: str, instructor_name: str,
     return rf_get_faculty_info(subject_code, instructor_name, hist_name, employee_number)['score']
 
 
-def rf_score_room(subject_code: str, room_name: str) -> float:
-    """RF predicted score for a (subject, room) pair; 0.0 if unseen or untrained."""
-    if _rf_room_model is None:
-        return 0.0
-    feat = _rf_room_stats.get((_norm_sc(subject_code), room_name.upper()))
-    return float(_rf_room_model.predict([feat])[0]) if feat else 0.0
+def rf_score_room(subject_code: str, room_name: str, program=None, year_level=None) -> float:
+    """P(assigned) for one (subject, room) pair; 0.0 if untrained or unknown room."""
+    return rf_rank_rooms(subject_code, [room_name], program, year_level).get(room_name, 0.0)

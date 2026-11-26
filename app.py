@@ -939,7 +939,10 @@ def _apply_scheduled_adjustments():
 #  RANDOM FOREST DSS  (Manual Scheduling — see rf_dss.py)
 # ─────────────────────────────────────────────────────────────
 from rf_dss import SKLEARN_OK as _SKLEARN_OK, train_rf_dss as _train_rf_dss
-from rf_dss import rf_get_faculty_info as _rf_get_faculty_info, rf_score_room as _rf_score_room
+from rf_dss import rf_rank_faculty as _rf_rank_faculty, rf_rank_rooms as _rf_rank_rooms
+# How many extra candidates WITHOUT history for the subject the RF may add to the
+# recommended list (cold start). The list is then ordered purely by RF probability.
+RF_EXTRA_CANDIDATES = 5
 from rf_dss import resolve_faculty_names
 
 
@@ -22417,27 +22420,37 @@ def api_dss_suggest():
                 # Inner loop completed without break = no Faculty record matched this historical name
                 print(f'[DSS DEBUG] hist NO MATCH: "{hf["instructor"]}" — not found in {len(all_faculty)} active faculty')
 
+        # RF: score EVERY active faculty member with the supervised Random Forest
+        # (P(assigned) learned from past assignment outcomes; see rf_dss.py), add the
+        # best few who have no history with this subject (cold start), and order the
+        # recommended list by that probability.
+        if _SKLEARN_OK:
+            _train_rf_dss()
+            _ml = _rf_rank_faculty(
+                subject_code, [f['employeenumber'] for f in all_faculty],
+                program=program, year_level=year_level, is_lab=is_lab, subject_name=subj_name,
+            )
+            if _ml:
+                _extra = sorted(
+                    (f for f in all_faculty
+                     if f['employeenumber'] not in recommended_ids
+                     and _ml.get(str(f['employeenumber']), {}).get('score', 0.0) > 0.0),
+                    key=lambda f: -_ml[str(f['employeenumber'])]['score'],
+                )[:RF_EXTRA_CANDIDATES]
+                for f in _extra:
+                    recommended_ids.add(f['employeenumber'])
+                    recommended_faculty.append(_fac_item(f, count=0, _src='rf'))
+                for entry in recommended_faculty:
+                    info = _ml.get(str(entry.get('id')), {'score': 0.0})
+                    entry['rf_score'] = info['score']
+                    if info.get('rf_explanation'):
+                        entry['rf_explanation'] = info['rf_explanation']
+                recommended_faculty.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
+
         others_faculty = [
             _fac_item(f)
             for f in all_faculty if f['employeenumber'] not in recommended_ids
         ]
-
-        # RF: re-rank recommended_faculty by predicted score.
-        # Replaces raw frequency-count ordering with a multi-variate RF prediction
-        # that weighs freq_together, instructor_total, subject_total, and ratio jointly.
-        if _SKLEARN_OK:
-            _train_rf_dss()
-            for entry in recommended_faculty:
-                info = _rf_get_faculty_info(
-                    subject_code,
-                    entry['name'],
-                    entry.get('_hist_name'),
-                    entry.get('id'),        # employee_number — primary identity key
-                )
-                entry['rf_score'] = info['score']
-                if info.get('rf_explanation'):
-                    entry['rf_explanation'] = info['rf_explanation']
-            recommended_faculty.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
 
         # 5. All rooms with type
         cur.execute("""
@@ -22655,6 +22668,30 @@ def api_dss_suggest():
         # tiebreaker, before RF re-rank.
         recommended_rooms.sort(key=lambda x: (x.get('context_count', 0), x.get('count', 0)), reverse=True)
 
+        # RF: score every room with the supervised Random Forest. Program/year-level
+        # usage, the previous term's room for this group, floor and lab-type fit are
+        # model features, so the RF probability alone orders the list. The best few
+        # rooms never used for this subject are added too (cold start).
+        if _SKLEARN_OK:
+            _train_rf_dss()
+            _rml = _rf_rank_rooms(subject_code, [r['roomname'] for r in all_rooms],
+                                  program=program, year_level=year_level, is_lab=is_lab)
+            if _rml:
+                _extra_r = sorted(
+                    (r for r in all_rooms
+                     if r['roomid'] not in recommended_room_ids and _rml.get(r['roomname'], 0.0) > 0.0),
+                    key=lambda r: -_rml[r['roomname']],
+                )[:RF_EXTRA_CANDIDATES]
+                for r in _extra_r:
+                    recommended_room_ids.add(r['roomid'])
+                    recommended_rooms.append({
+                        "id": r['roomid'], "name": r['roomname'], "type": r['roomtype'],
+                        "count": 0, "context_count": 0, "_src": "rf",
+                    })
+                for entry in recommended_rooms:
+                    entry['rf_score'] = _rml.get(entry['name'], 0.0)
+                recommended_rooms.sort(key=lambda x: x.get('rf_score', 0.0), reverse=True)
+
         others_rooms = [
             {"id": r['roomid'], "name": r['roomname'], "type": r['roomtype']}
             for r in all_rooms if r['roomid'] not in recommended_room_ids
@@ -22664,20 +22701,6 @@ def api_dss_suggest():
             others_rooms.sort(key=lambda r: (0 if r['type'] == 'Laboratory' else 1))
         else:
             others_rooms.sort(key=lambda r: (0 if r['type'] != 'Laboratory' else 1))
-
-        # RF: re-rank recommended_rooms by predicted score.
-        # Same multi-variate approach as faculty — RF considers freq_together,
-        # room_total usage, subject_total, and ratio to produce a richer ranking. The RF
-        # model itself has no notion of program/year level, so a program+year-level match
-        # still wins the top spot regardless of RF score — RF only orders within each group
-        # (context-matched rooms among themselves, then the rest among themselves).
-        if _SKLEARN_OK:
-            for entry in recommended_rooms:
-                entry['rf_score'] = _rf_score_room(subject_code, entry['name'])
-        recommended_rooms.sort(
-            key=lambda x: (x.get('context_count', 0), x.get('rf_score', 0.0), x.get('count', 0)),
-            reverse=True
-        )
 
         from database import load_scheduler_config as _lsc
         _lab_cfg = _lsc()

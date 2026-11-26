@@ -1817,15 +1817,15 @@ async function _loadDSSSuggestions(subjCode, labWarn) {
 
         const isPreferredType = (r) => data.is_lab ? r.type === 'Laboratory' : r.type !== 'Laboratory';
 
-        // Historical rooms always come first (they were actually used for this subject)
-        // then type-compatible non-historical rooms, then everything else
+        // RF-ranked rooms come first (ordered by predicted probability of being
+        // assigned), then type-compatible remaining rooms, then everything else
         const historicalRooms = data.rooms.recommended;
         const suitableRooms   = data.rooms.others.filter(isPreferredType);
         const remainingRooms  = data.rooms.others.filter(r => !isPreferredType(r));
 
         buildDSSMenu('room', [
-            { cls: 'recommended', label: 'MOST USED', items: historicalRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
-            { cls: 'optional',    label: 'RECOMMENDATIONS',    items: suitableRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
+            { cls: 'recommended', label: 'RECOMMENDATIONS', items: historicalRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
+            { cls: 'optional',    label: 'SUITABLE ROOM TYPE', items: suitableRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) },
             { cls: 'others',      label: 'OTHERS',            items: remainingRooms.map(r => ({ value: String(r.id), text: r.name, type: r.type })) }
         ]);
 
