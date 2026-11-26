@@ -204,6 +204,11 @@
         background-color: #fff3e0;
         color: #e65100;
     }
+    .role-progcoord {
+        border: 1px solid #9c27b0;
+        background-color: #f3e5f5;
+        color: #6a1b9a;
+    }
 
     /* Status Text */
     .status-active {
@@ -372,11 +377,12 @@
             <i class="fas fa-search"></i>
             <input type="search" id="umSearch" placeholder="Search employee no. or name..." autocomplete="off" aria-label="Search users">
         </div>
-        <select id="umRoleFilter" class="um-filter" aria-label="Filter by employment type">
-            <option value="">All Employment Types</option>
-            {% for r in accounts|map(attribute='role')|select|unique|sort %}
-            <option value="{{ r }}">{{ r }}</option>
-            {% endfor %}
+        <select id="umRoleFilter" class="um-filter" aria-label="Filter by role">
+            <option value="">All Roles</option>
+            <option value="Admin">Admin</option>
+            <option value="Academic Head">Academic Head</option>
+            <option value="Faculty">Faculty</option>
+            <option value="Program Coordinator">Program Coordinator</option>
         </select>
         <select id="umStatusFilter" class="um-filter" aria-label="Filter by status">
             <option value="">All Status</option>
@@ -394,7 +400,7 @@
                 <tr>
                     <th>EMPLOYEE NO.</th>
                     <th style="text-align: left; padding-left: 30px;">FULL NAME</th>
-                    <th>EMPLOYMENT TYPE</th>
+                    <th>ROLE</th>
                     <th>STATUS</th>
                     <th>DATE CREATED</th>
                     <th>ACTIONS</th>
@@ -413,6 +419,8 @@
                             <span class="role-pill role-admin">{{ acc.role }}</span>
                         {% elif acc.role == 'Academic Head' %}
                             <span class="role-pill role-acadhead">{{ acc.role }}</span>
+                        {% elif acc.role == 'Program Coordinator' %}
+                            <span class="role-pill role-progcoord">{{ acc.role }}</span>
                         {% else %}
                             <span class="role-pill role-faculty">{{ acc.role }}</span>
                         {% endif %}

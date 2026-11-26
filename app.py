@@ -9392,13 +9392,20 @@ def export_schedule():
 
 
 def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, published_only=False,
-                   include_unscheduled=True):
+                   include_unscheduled=True, active_sections_only=False, blank_unset=False):
     """Return list of schedule rows (normalized + historical fallback).
     published_only=True leaves Draft versions out (the Faculty Class Schedule and
     its export show only what is Published).
     include_unscheduled=True (default) also lists each section's subjects that have no
     schedule yet, with TBA instructor/day/time/room (_sch_unscheduled_rows) — the Room
     Schedule callers turn it off (a subject with no room belongs to no room).
+    active_sections_only=True leaves out every row of a deactivated section (Reports >
+    Class Schedule); rows with no known section are kept.
+    blank_unset=True (Reports > Class Schedule) shows "TBA" only where it was actually
+    set: a saved schedule's empty instructor / room is a TBA choice (the editor stores
+    TBA as NULL) and stays "TBA", while what was never set is left blank — a subject with
+    no saved schedule at all (unscheduled rows), and the room of a saved subject that has
+    no meeting (day/time) yet. Historical rows keep whatever was recorded.
 
     When merge=True (default), collapses multiple schedule_sessions rows per
     subject offering into one (used by Table View exports). When merge=False,
@@ -9423,6 +9430,12 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
     ], []
     if published_only:
         nf[0] = "sv.status = 'Published'"
+    if active_sections_only:
+        nf.append("sec.isactive IS NOT FALSE")
+    # Room of an Official row. A session saved without a room was saved as TBA; a subject
+    # with no session (no meeting at all) never had a room set — blank under blank_unset.
+    room_sql = ("CASE WHEN ss.sessionid IS NULL THEN '' ELSE COALESCE(r.roomname,'TBA') END"
+                if blank_unset else "COALESCE(r.roomname,'TBA')")
     if ay_ids:
         nf.append(f"ay.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); np_.extend(ay_ids)
     if sem_types:
@@ -9449,7 +9462,7 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
             CASE WHEN ts_s.timevalue IS NOT NULL AND ts_e.timevalue IS NOT NULL
                  THEN TO_CHAR(ts_s.timevalue,'HH12:MI AM')||' - '||TO_CHAR(ts_e.timevalue,'HH12:MI AM')
                  ELSE NULL END AS "Time",
-            COALESCE(r.roomname,'TBA') AS "Room",
+            """ + room_sql + """ AS "Room",
             r.roomid AS "RoomID",
             ay.yearstart||'-'||ay.yearend AS "AcademicYear",
             sem.semestertype AS "SemesterType",
@@ -9482,6 +9495,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
     # PHASE 6.5-A — Published Local replacements are part of operational
     # Class Schedule exports. Draft Local and Archived Local never appear.
     lf, lp_ = ["la.status = 'Published'", "la.is_active = TRUE"], []
+    if active_sections_only:
+        lf.append("sec_l.isactive IS NOT FALSE")
     if ay_ids:
         lf.append(f"ay_l.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); lp_.extend(ay_ids)
     if sem_types:
@@ -9536,6 +9551,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
     local_rows = list(cur.fetchall() or [])
 
     hf, hp_ = ["TRUE"], []
+    if active_sections_only:
+        hf.append("sec.isactive IS NOT FALSE")
     if ay_ids:
         hf.append(f"hd.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); hp_.extend(ay_ids)
     if sem_types:
@@ -9596,7 +9613,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
         # No Academic Year ticked (e.g. only a Semester / Program filter): still list every
         # subject of the years that are live, not only of an explicitly chosen year.
         fill_ays = list(ay_ids) or _sch_live_academic_years(cur, current_rows)
-        combined += _sch_unscheduled_rows(cur, fill_ays, sem_types, programs, year_levels, combined)
+        combined += _sch_unscheduled_rows(cur, fill_ays, sem_types, programs, year_levels, combined,
+                                          tba='' if blank_unset else 'TBA')
     return _sch_merge_session_rows(combined) if merge else combined
 
 
@@ -9616,7 +9634,7 @@ def _sch_live_academic_years(cur, current_rows):
     return [r['academicyearid'] for r in cur.fetchall() if r['still_open'] or r['label'] in labels]
 
 
-def _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, rows):
+def _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, rows, tba='TBA'):
     """Class Schedule rows for the subjects a section must take this term but that have
     no schedule yet — listed with TBA instructor / day / time / room so the export shows
     the section's whole term, not only what is scheduled.
@@ -9690,12 +9708,12 @@ def _sch_unscheduled_rows(cur, ay_ids, sem_types, programs, year_levels, rows):
             if (('name',) + _k(t['sectionname'], s['code'], t['ay_label'], t['semestertype'])) in have:
                 continue
             out.append({
-                'Instructor': 'TBA', 'SubjectCode': s['code'], 'SubjectName': s['subjectname'],
+                'Instructor': tba, 'SubjectCode': s['code'], 'SubjectName': s['subjectname'],
                 'LectureHours': s['lec'], 'LaboratoryHours': s['lab'], 'CreditUnits': s['units'],
                 'Program': t['programcode'], 'YearLevel': t['yearlevel'],
                 'Section': t['sectionname'], 'SectionID': t['sectionid'],
                 'Hours': (s['lec'] or 0) + (s['lab'] or 0),
-                'Day/s': None, 'Time': None, 'Room': 'TBA', 'RoomID': None,
+                'Day/s': None, 'Time': None, 'Room': tba, 'RoomID': None,
                 'AcademicYear': t['ay_label'], 'SemesterType': t['semestertype'],
                 'OfficialSessionID': None, 'ScheduleSource': 'Unscheduled',
             })
@@ -9774,7 +9792,10 @@ def _sch_merge_session_rows(rows):
         base['Time']  = ' / '.join(s['time'] for s in slots if s['time'])
         room_seq = [s['room'] for s in slots if s['room']]
         distinct_rooms = list(dict.fromkeys(room_seq))
-        base['Room'] = distinct_rooms[0] if len(distinct_rooms) <= 1 else ' / '.join(room_seq)
+        if not distinct_rooms:          # no room on any slot (e.g. blank, not "TBA")
+            base['Room'] = base.get('Room') or ''
+        else:
+            base['Room'] = distinct_rooms[0] if len(distinct_rooms) == 1 else ' / '.join(room_seq)
         merged.append(base)
     return merged
 
@@ -9961,8 +9982,11 @@ def _sch_build_calendar(yl_rows, text_fn=None):
         days   = _sch_split_days(r.get('Day/s'))
         parsed = _sch_parse_time_range(r.get('Time'))
         sec_suffix = f" ({r['Section']})" if r.get('Section') else ''
+        # A blank ('') instructor / room stays blank (Reports: blank_unset); only a missing one
+        # (None) falls back to TBA.
+        room_txt = 'TBA' if r.get('Room') is None else r.get('Room')
         note = (f"{r.get('SubjectCode') or ''}{sec_suffix} — {r.get('Day/s') or 'No Day'} "
-                f"{r.get('Time') or 'No Time'} ({r.get('Room') or 'TBA'})")
+                f"{r.get('Time') or 'No Time'}" + (f" ({room_txt})" if room_txt else ''))
         if not days or not parsed:
             unscheduled.append(note)
             continue
@@ -9975,7 +9999,8 @@ def _sch_build_calendar(yl_rows, text_fn=None):
             identities[key] = {
                 'days': set(), 'start': start, 'end': end, 'disp': disp,
                 'subjectcode': r.get('SubjectCode') or '', 'section': r.get('Section'),
-                'instructor': r.get('Instructor') or 'TBA', 'room': r.get('Room') or 'TBA',
+                'instructor': 'TBA' if r.get('Instructor') is None else r.get('Instructor'),
+                'room': room_txt,
                 'program': r.get('Program'),
             }
             order.append(key)
@@ -10213,7 +10238,8 @@ def _sch_period_title(ay_label, sem_type):
     return _sch_official_title(_SCH_SEM_LABEL.get(sem_type, sem_type or 'All Semesters'), ay_label)
 
 
-def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table', published_only=False):
+def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='table', published_only=False,
+                        active_sections_only=False, blank_unset=False):
     """Fetch + group Class Schedule rows and compute the semester/AY labels and
     full program names used by the 'official' SUBJECT OFFERINGS layout
     (_sch_gen_xlsx/docx/pdf) — the exact same data prep the Class Schedule SIS
@@ -10221,7 +10247,8 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     > Class Schedule (preview + export) calls this too so both stay identical
     to that feature instead of drifting into a separate report design."""
     layout = layout if layout in ('table', 'calendar') else 'table'
-    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, published_only=published_only)
+    rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, published_only=published_only,
+                            active_sections_only=active_sections_only, blank_unset=blank_unset)
     groups = _sch_exp_groups(rows)
 
     sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
@@ -10241,7 +10268,8 @@ def _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout='t
     cal_rows = cal_groups = None
     if layout == 'calendar':
         cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False,
-                                    published_only=published_only)
+                                    published_only=published_only,
+                                    active_sections_only=active_sections_only, blank_unset=blank_unset)
         cal_groups = _sch_exp_groups(cal_rows)
 
     return rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout
@@ -10284,7 +10312,8 @@ def schedule_export_count():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels,
+                                active_sections_only=True, blank_unset=True)
         groups = _sch_exp_groups(rows)
         return jsonify({'count': len(rows), 'programs': len(groups)})
     except Exception as e:
@@ -10315,7 +10344,10 @@ def schedule_export_multi():
     conn = get_db_connection()
     cur  = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels)
+        # Like Reports > Class Schedule: deactivated sections are left out, and "TBA"
+        # only where it was set (what was never set stays blank) — see _sch_exp_fetch.
+        rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels,
+                                active_sections_only=True, blank_unset=True)
         groups = _sch_exp_groups(rows)
         sem_map    = {'A': '1st Semester', 'B': '2nd Semester', 'C': 'Summer'}
         uniq_sems  = sorted({r['SemesterType'] for r in rows if r.get('SemesterType')})
@@ -10333,7 +10365,8 @@ def schedule_export_multi():
         # can be placed in its own grid cell — only fetched when actually needed.
         cal_rows = cal_groups = None
         if layout == 'calendar':
-            cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False)
+            cal_rows   = _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False,
+                                        active_sections_only=True, blank_unset=True)
             cal_groups = _sch_exp_groups(cal_rows)
 
         mime_map = {
@@ -10399,7 +10432,8 @@ def faculty_schedule_export_count():
         if not active:
             return jsonify({'count': 0, 'programs': 0})
         rows = _sch_exp_fetch(cur, [active['academicyearid']], [active['semestertype']],
-                              programs, year_levels, published_only=True)
+                              programs, year_levels, published_only=True,
+                              active_sections_only=True, blank_unset=True)
         return jsonify({'count': len(rows), 'programs': len(_sch_exp_groups(rows))})
     except Exception:
         import traceback; traceback.print_exc()
@@ -10458,7 +10492,8 @@ def faculty_schedule_export():
 
         rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
             _sch_export_context(cur, [active['academicyearid']], [active['semestertype']],
-                                [program] if program else [], year_levels, layout, published_only=True)
+                                [program] if program else [], year_levels, layout, published_only=True,
+                                active_sections_only=True, blank_unset=True)
         rows, groups, cal_rows, cal_groups = _sch_filter_export(
             cur, rows, groups, cal_rows, cal_groups, section_id or None, emp_num or None)
         if not rows:
@@ -10501,7 +10536,8 @@ def _faculty_schedule_export_multi(data):
             return jsonify({'error': 'No active academic term found.'}), 400
         rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
             _sch_export_context(cur, [active['academicyearid']], [active['semestertype']],
-                                programs, year_levels, layout, published_only=True)
+                                programs, year_levels, layout, published_only=True,
+                                active_sections_only=True, blank_unset=True)
         if not rows:
             return jsonify({'error': 'There is no published schedule for the selected filters.'}), 404
         filename = _ta_export.clean_filename(data.get('filename')) or 'schedule_export'
@@ -34266,7 +34302,9 @@ def _fetch_report_data(report_type, params, cur):
 
     # ── CLASS SCHEDULE ──────────────────────────────────────────────────────
     if report_type == 'class_schedule':
-        rows = _sch_exp_fetch(cur, ay_ids, sem_types, programs_f, year_levels)
+        # Reports: deactivated sections are left out; no schedule → blank, not "TBA".
+        rows = _sch_exp_fetch(cur, ay_ids, sem_types, programs_f, year_levels,
+                              active_sections_only=True, blank_unset=True)
         if section_id:
             rows = [r for r in rows if str(r.get('SectionID')) == str(section_id)]
         if room_id:
@@ -34583,7 +34621,8 @@ def report_class_schedule_sections():
 
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        f, p = ["1=1"], []
+        # Deactivated sections are left out of the Class Schedule report, so not offered here.
+        f, p = ["sec.isactive IS NOT FALSE"], []
         if ay_ids:
             f.append(f"pyl.academicyearid IN ({','.join(['%s']*len(ay_ids))})"); p.extend(ay_ids)
         if programs:
@@ -34701,7 +34740,8 @@ def report_preview(report_type):
             sch_layout  = (params.get('layout') or 'table').lower()
 
             rows, groups, cal_rows, cal_groups, sch_sem_label, sch_ay_label, prog_name_map, sch_layout = \
-                _sch_export_context(cur, ay_ids, sem_types, programs_f, year_levels, sch_layout)
+                _sch_export_context(cur, ay_ids, sem_types, programs_f, year_levels, sch_layout,
+                                    active_sections_only=True, blank_unset=True)
 
             if section_id or room_id or faculty_id:
                 _fac_fname = None
@@ -35173,7 +35213,8 @@ def report_export(report_type):
         cur  = conn.cursor(cursor_factory=RealDictCursor)
         try:
             rows, groups, cal_rows, cal_groups, sem_labels, ay_label, prog_name_map, layout = \
-                _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout)
+                _sch_export_context(cur, ay_ids, sem_types, programs, year_levels, layout,
+                                    active_sections_only=True, blank_unset=True)
 
             if section_id or room_id or faculty_id:
                 _fac_fname = None

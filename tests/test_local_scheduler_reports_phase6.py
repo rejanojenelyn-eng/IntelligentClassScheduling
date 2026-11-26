@@ -188,4 +188,4 @@ def test_room_schedule_all_formats_share_effective_room_context():
 def test_class_schedule_table_and_calendar_both_resolve_through_sch_exp_fetch():
     b=block("_sch_export_context","def _sch_gen_csv")
     assert "rows   = _sch_exp_fetch(" in b
-    assert "_sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False)" in b
+    assert "_sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=False," in b
