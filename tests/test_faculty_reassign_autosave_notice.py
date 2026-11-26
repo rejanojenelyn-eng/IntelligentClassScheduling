@@ -12,7 +12,7 @@ def test_reassignment_records_old_faculty_and_status():
 
 
 def test_auto_save_explains_the_faculty_change_instead_of_generic_draft_notice():
-    assert "if (!_reassign) await showValidationModal('Saved as Draft'" in HTML
+    assert "if (!_reassign) await _notifyDone('Saved as Draft'" in HTML
     assert "was changed from ${_reassign.fromName} to ${_reassign.toName}" in HTML
 
 

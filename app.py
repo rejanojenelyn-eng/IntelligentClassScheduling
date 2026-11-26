@@ -33,6 +33,14 @@ import teaching_assignment_export as _ta_export
 import weekly_schedule_export as _ws_export
 import export_style as _export_style
 import shared_rooms as _shared_rooms
+import shared_subjects as _shared_subjects
+
+
+def _units_num(v):
+    """Units for display: whole numbers stay ints (3); a shared subject's split keeps
+    its decimals (1.5)."""
+    f = round(float(v or 0), 2)
+    return int(f) if f.is_integer() else f
 import qr_poster as _qr_poster
 from database import get_db_connection, query_db, load_scheduler_config
 from config import Config
@@ -2262,14 +2270,14 @@ def _auto_archive_semester(cur, old_sem_id):
                 COALESCE(cs.creditunits, 0)                              AS unit,
                 COALESCE(cs.tuitionhours,
                          cs.lecturehours + cs.laboratoryhours, 0)        AS hrs,
-                sc.employeenumber
+                COALESCE(ss.employeenumber, sc.employeenumber)           AS employeenumber
             FROM   schedule_version sv
             JOIN   schedule sc          ON sv.scheduleid          = sc.scheduleid
             JOIN   curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c         ON cs.curriculumid        = c.curriculumid
             JOIN   semester sem         ON sc.semesterid          = sem.semesterid
-            LEFT JOIN faculty f         ON sc.employeenumber      = f.employeenumber
             JOIN   schedule_sessions ss ON ss.versionid           = sv.versionid
+            LEFT JOIN faculty f         ON COALESCE(ss.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN sections sec       ON sc.sectionid            = sec.sectionid
             LEFT JOIN room r            ON ss.roomid              = r.roomid
             LEFT JOIN timeslot ts_s     ON ss.starttimeid         = ts_s.timeid
@@ -2280,7 +2288,7 @@ def _auto_archive_semester(cur, old_sem_id):
                 f.lastname, f.firstname, cs.subjectcode, cs.subjectname,
                 c.programcode, cs.yearlevel, sc.semesterid, sem.academicyearid,
                 cs.lecturehours, cs.laboratoryhours, cs.creditunits, cs.tuitionhours,
-                sc.employeenumber
+                COALESCE(ss.employeenumber, sc.employeenumber)
         """, (old_sem_id,))
         rows = cur.fetchall()
 
@@ -4180,7 +4188,7 @@ def academic_my_dashboard():
         LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
         LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
         LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-        WHERE sc.employeenumber = %s AND sv.status = 'Published'
+        WHERE COALESCE(ss.employeenumber, sc.employeenumber) = %s AND sv.status = 'Published'
           AND sem.isactive = TRUE
           AND ss.daydesc = %s
         ORDER BY ts_s.timevalue
@@ -4188,17 +4196,19 @@ def academic_my_dashboard():
     my_schedule = cur.fetchall()
 
     cur.execute("""
-        SELECT COALESCE(SUM(cs.creditunits), 0) as total_units,
+        SELECT COALESCE(SUM(cs.creditunits * """ + _shared_subjects.unit_share_sql('sv.versionid', 'me.emp') + """), 0) as total_units,
                COUNT(DISTINCT cs.subjectcode) as total_subjects
         FROM schedule_version sv
         JOIN schedule sc ON sv.scheduleid = sc.scheduleid
         JOIN semester sem ON sc.semesterid = sem.semesterid
         JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-        WHERE sc.employeenumber = %s AND sv.status = 'Published'
+        CROSS JOIN (SELECT %s::varchar AS emp) me
+        -- Shared subjects: also where this faculty teaches some slices (their share of the units).
+        WHERE """ + _shared_subjects.teaches_version_sql('sv', 'sc', 'me.emp') + """ AND sv.status = 'Published'
           AND sem.isactive = TRUE
     """, (emp_num,))
     stats = cur.fetchone()
-    total_units    = int(stats['total_units'])    if stats else 0
+    total_units    = _units_num(stats['total_units']) if stats else 0
     total_subjects = int(stats['total_subjects']) if stats else 0
 
     cur.close(); conn.close()
@@ -5035,7 +5045,7 @@ def _local_upcoming_makeup_block(cur, sessions, semester_id, section_id, today=N
               AND ts_e.timevalue > (SELECT timevalue FROM timeslot WHERE timeid = %s)
               AND NOT (sc2.sectionid IS NOT DISTINCT FROM %s AND UPPER(cs.subjectcode) = %s)
               AND ((%s::int IS NOT NULL AND c2.new_roomid = %s::int)
-                   OR (%s::text IS NOT NULL AND sc2.employeenumber::text = %s::text)
+                   OR (%s::text IS NOT NULL AND COALESCE(c2.submitted_by, sc2.employeenumber)::text = %s::text)
                    OR sc2.sectionid IS NOT DISTINCT FROM %s)
             ORDER BY c2.requested_date
             LIMIT 1
@@ -5119,7 +5129,7 @@ def _request_official_shadowed(req_id):
                CASE WHEN ss.roomid = scr.new_roomid THEN 'room' ELSE 'faculty' END AS why,
                ss.sessionid AS official_sessionid, sv.versionid, s.semesterid, s.sectionid,
                pyl.programcode, pyl.yearlevel,
-               COALESCE(sv.employeenumber, s.employeenumber) AS employeenumber,
+               COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) AS employeenumber,
                las.daydesc AS new_daydesc, las.starttimeid AS new_starttimeid,
                las.endtimeid AS new_endtimeid, las.roomid AS new_roomid
         FROM schedule_change_request scr
@@ -5146,7 +5156,7 @@ def _request_official_shadowed(req_id):
           AND UPPER(ss.daydesc) = UPPER(scr.new_daydesc)
           AND t1.timevalue < nt2.timevalue AND t2.timevalue > nt1.timevalue
           AND (ss.roomid = scr.new_roomid
-               OR COALESCE(sv.employeenumber, s.employeenumber) = scr.submitted_by)
+               OR COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) = scr.submitted_by)
         ORDER BY 1, 2
     """, [ids]) or []
     return [dict(r) for r in rows]
@@ -5202,7 +5212,7 @@ def _request_merge_partners(semester_id, day, start_t, end_t, room_id, requester
         LEFT JOIN room r ON r.roomid = ss.roomid
         WHERE sc2.semesterid = %s AND UPPER(ss.daydesc) = UPPER(%s)
           AND ts_s.timevalue = %s AND ts_e.timevalue = %s
-          AND UPPER(cs.subjectcode) = UPPER(%s) AND sc2.employeenumber = %s
+          AND UPPER(cs.subjectcode) = UPPER(%s) AND COALESCE(ss.employeenumber, sc2.employeenumber) = %s
           AND sc2.sectionid <> %s
           AND NOT EXISTS (
               SELECT 1 FROM public.local_arrangement la_x
@@ -5929,7 +5939,7 @@ def _request_draft_conflicts(req_type, req_id):
             SELECT dss.sessionid, dss.versionid, dss.roomid, dss.daydesc,
                    dsc.sectionid, dsec.sectionname, dsec.programyearlevelid, dpyl.programcode,
                    UPPER(dcs.subjectcode) AS subjectcode,
-                   COALESCE(dsv.employeenumber, dsc.employeenumber) AS employeenumber,
+                   COALESCE(dss.employeenumber, dsv.employeenumber, dsc.employeenumber) AS employeenumber,
                    dr.roomname,
                    TO_CHAR(dts_s.timevalue, 'HH12:MI AM') AS start_t,
                    TO_CHAR(dts_e.timevalue, 'HH12:MI AM') AS end_t
@@ -5949,7 +5959,7 @@ def _request_draft_conflicts(req_type, req_id):
               AND dts_s.timevalue < %s AND dts_e.timevalue > %s
               AND NOT (dsc.sectionid IS NOT DISTINCT FROM %s AND UPPER(dcs.subjectcode) = %s)
               AND (dss.roomid = %s
-                   OR COALESCE(dsv.employeenumber, dsc.employeenumber)::text = %s::text
+                   OR COALESCE(dss.employeenumber, dsv.employeenumber, dsc.employeenumber)::text = %s::text
                    OR dsec.programyearlevelid = %s)
             ORDER BY dsec.sectionname, dcs.subjectcode, dts_s.timevalue
         """, [requester['semesterid'], m['day'], m['end_t'], m['start_t'],
@@ -6039,7 +6049,7 @@ def _apply_adjustment_to_official(cur, adjs, overrides, dry_run=False, ignore_dr
     moved = {int(o['official_sessionid']): o for o in overrides}
     cur.execute("""
         SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid,
-               COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+               COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS employeenumber,
                cs.subjectcode
         FROM schedule_sessions ss
         JOIN schedule_version sv ON ss.versionid = sv.versionid
@@ -8721,8 +8731,8 @@ def get_offerings_schedule():
                 JOIN curriculumsubject cs      ON sc.curriculumsubjectid    = cs.curriculumsubjectid
                 JOIN sections sec              ON sc.sectionid              = sec.sectionid
                 LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid  = pyl.programyearlevelid
-                LEFT JOIN faculty f            ON sc.employeenumber         = f.employeenumber
                 LEFT JOIN schedule_sessions ss ON ss.versionid             = sv.versionid
+                LEFT JOIN faculty f            ON COALESCE(ss.employeenumber, sc.employeenumber)         = f.employeenumber
                 LEFT JOIN room r               ON ss.roomid                 = r.roomid
                 LEFT JOIN timeslot ts_s        ON ss.starttimeid            = ts_s.timeid
                 LEFT JOIN timeslot ts_e        ON ss.endtimeid              = ts_e.timeid
@@ -8884,8 +8894,8 @@ def get_offerings_schedule():
             JOIN curriculumsubject cs     ON sc.curriculumsubjectid    = cs.curriculumsubjectid
             JOIN sections sec             ON sc.sectionid              = sec.sectionid
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid  = pyl.programyearlevelid
-            LEFT JOIN faculty f           ON sc.employeenumber         = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid             = sv.versionid
+            LEFT JOIN faculty f           ON COALESCE(ss.employeenumber, sc.employeenumber)         = f.employeenumber
             LEFT JOIN room r              ON ss.roomid                 = r.roomid
             LEFT JOIN timeslot ts_s       ON ss.starttimeid            = ts_s.timeid
             LEFT JOIN timeslot ts_e       ON ss.endtimeid              = ts_e.timeid
@@ -9295,8 +9305,8 @@ def export_schedule():
             JOIN curriculumsubject cs      ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN sections sec              ON sc.sectionid = sec.sectionid
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-            LEFT JOIN faculty f            ON sc.employeenumber = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid = sv.versionid
+            LEFT JOIN faculty f            ON COALESCE(ss.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN room r               ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s        ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e        ON ss.endtimeid   = ts_e.timeid
@@ -9452,8 +9462,8 @@ def _sch_exp_fetch(cur, ay_ids, sem_types, programs, year_levels, merge=True, pu
         LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
         JOIN semester sem           ON sc.semesterid=sem.semesterid
         JOIN academicyear ay        ON sem.academicyearid=ay.academicyearid
-        LEFT JOIN faculty f         ON sc.employeenumber=f.employeenumber
         LEFT JOIN schedule_sessions ss ON ss.versionid=sv.versionid
+        LEFT JOIN faculty f         ON COALESCE(ss.employeenumber, sc.employeenumber)=f.employeenumber
         LEFT JOIN room r            ON ss.roomid=r.roomid
         LEFT JOIN timeslot ts_s     ON ss.starttimeid=ts_s.timeid
         LEFT JOIN timeslot ts_e     ON ss.endtimeid=ts_e.timeid
@@ -18084,6 +18094,7 @@ def manual_schedule_editor():
         return render_template('academic/manualScheduleEditor.html',
                                shared_room_limits_json=json.dumps(_shared_rooms.limits()),
                                shared_room_flex_json=json.dumps(_shared_rooms.flex_rules()),
+                               shared_subject_limits_json=json.dumps(_shared_subjects.limits()),
                                scheduler_mode=scheduler_mode,
                                is_acad_head=is_acad_head,
                                # Lets the editor tell when the open subject is the Academic
@@ -19000,7 +19011,7 @@ def _unchanged_official_subjects(cur, semesterid, sectionid, sched_data, codes):
                 cls.get('employeenumber') or cls.get('faculty_id')))
     cur.execute("""
         SELECT UPPER(cs.subjectcode) AS code, ss.daydesc, t1.timevalue AS st, t2.timevalue AS et,
-               ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS fac
+               ss.roomid, COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) AS fac
         FROM public.schedule_version sv
         JOIN public.schedule s ON s.scheduleid = sv.scheduleid
         JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
@@ -19452,7 +19463,7 @@ def _local_faculty_effective_occurrences(cur, faculty, semesterid, replaced_offi
         JOIN public.timeslot ts_s ON ss.starttimeid = ts_s.timeid
         JOIN public.timeslot ts_e ON ss.endtimeid = ts_e.timeid
         WHERE s.semesterid = %s
-          AND s.employeenumber = %s
+          AND COALESCE(ss.employeenumber, s.employeenumber) = %s
           AND NOT (ss.sessionid = ANY(%s))
           AND NOT EXISTS (
               SELECT 1
@@ -19767,7 +19778,7 @@ def _get_official_occurrence_faculty(cur, official_sessionid, versionid,
                                     yearlevel, subjectcode):
     """Return faculty inherited from the exact current Published Official occurrence."""
     cur.execute(f"""
-        SELECT s.employeenumber
+        SELECT COALESCE(ss.employeenumber, s.employeenumber) AS employeenumber
         FROM public.schedule_sessions ss
         JOIN public.schedule_version sv ON ss.versionid = sv.versionid
         JOIN public.schedule s ON sv.scheduleid = s.scheduleid
@@ -20219,7 +20230,7 @@ def api_publish_local_arrangement(arr_id):
                   )
                   AND (
                       (%s IS NOT NULL AND ss.roomid = %s)
-                      OR (%s IS NOT NULL AND s.employeenumber = %s)
+                      OR (%s IS NOT NULL AND COALESCE(ss.employeenumber, s.employeenumber) = %s)
                       OR s.sectionid = %s
                   )
             """, (
@@ -20256,7 +20267,7 @@ def api_publish_local_arrangement(arr_id):
                     LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
                     WHERE ss.daydesc = %s
                       AND ss.starttimeid < %s AND ss.endtimeid > %s
-                      AND COALESCE(sv.employeenumber, s.employeenumber) = %s
+                      AND COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) = %s
                       AND NOT (s.sectionid = %s AND UPPER(cs.subjectcode) = UPPER(%s))
                 """, (
                     arr['semesterid'], ds['daydesc'], ds['endtimeid'], ds['starttimeid'],
@@ -20978,7 +20989,7 @@ def api_local_check_room_conflicts():
                 LEFT JOIN public.sections sec ON s.sectionid=sec.sectionid
                 LEFT JOIN public.program_yearlevel pyl
                   ON sec.programyearlevelid=pyl.programyearlevelid
-                LEFT JOIN public.faculty f ON s.employeenumber=f.employeenumber
+                LEFT JOIN public.faculty f ON COALESCE(ss.employeenumber, s.employeenumber)=f.employeenumber
                 LEFT JOIN public.timeslot ts1 ON ss.starttimeid=ts1.timeid
                 LEFT JOIN public.timeslot ts2 ON ss.endtimeid=ts2.timeid
                 WHERE ss.daydesc=%s
@@ -20999,7 +21010,7 @@ def api_local_check_room_conflicts():
                         AND las_x.official_sessionid=ss.sessionid
                   )
                   AND ((%s IS NOT NULL AND ss.roomid=%s)
-                    OR (%s IS NOT NULL AND s.employeenumber=%s)
+                    OR (%s IS NOT NULL AND COALESCE(ss.employeenumber, s.employeenumber)=%s)
                     OR s.sectionid=%s)
             """,(sem_id,c['daydesc'],c['endtimeid'],c['starttimeid'],
                  c['official_sessionid'], c['official_sessionid'], proposed_official_ids,
@@ -21078,7 +21089,7 @@ def api_local_check_room_conflicts():
                            COALESCE(pyl.programcode, '') AS programcode,
                            pyl.yearlevel AS yearlevel,
                            UPPER(cs.subjectcode) AS subjectcode, ss.daydesc,
-                           ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS employeenumber,
+                           ss.roomid, COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) AS employeenumber,
                            TO_CHAR(ts1.timevalue,'HH12:MI AM') AS start_fmt,
                            TO_CHAR(ts2.timevalue,'HH12:MI AM') AS end_fmt,
                            ss.starttimeid, ss.endtimeid,
@@ -21090,12 +21101,12 @@ def api_local_check_room_conflicts():
                     JOIN public.curriculumsubject cs ON s.curriculumsubjectid=cs.curriculumsubjectid
                     LEFT JOIN public.sections sec ON s.sectionid=sec.sectionid
                     LEFT JOIN public.program_yearlevel pyl ON sec.programyearlevelid=pyl.programyearlevelid
-                    LEFT JOIN public.faculty f ON COALESCE(sv.employeenumber, s.employeenumber)=f.employeenumber
+                    LEFT JOIN public.faculty f ON COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber)=f.employeenumber
                     LEFT JOIN public.timeslot ts1 ON ss.starttimeid=ts1.timeid
                     LEFT JOIN public.timeslot ts2 ON ss.endtimeid=ts2.timeid
                     WHERE ss.daydesc=%s
                       AND ss.starttimeid < %s AND ss.endtimeid > %s
-                      AND COALESCE(sv.employeenumber, s.employeenumber)=%s
+                      AND COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber)=%s
                       AND NOT (s.sectionid=%s AND UPPER(cs.subjectcode)=%s)
                 """,(sem_id,c['daydesc'],c['endtimeid'],c['starttimeid'],
                      c['employeenumber'],section_id,c['subjectcode']))
@@ -21223,7 +21234,7 @@ def get_room_schedule(room_id):
             JOIN schedule s ON sv.scheduleid = s.scheduleid
             {joins}
             JOIN curriculumsubject cs ON s.curriculumsubjectid = cs.curriculumsubjectid
-            JOIN faculty f ON s.employeenumber = f.employeenumber
+            JOIN faculty f ON COALESCE(ss.employeenumber, s.employeenumber) = f.employeenumber
             WHERE {' AND '.join(filters)}
         """
         all_params = list(params)
@@ -21429,7 +21440,7 @@ def api_rooms_occupancy_by_day():
         official_rows = query_db(f"""
             SELECT ss.roomid, ss.starttimeid, ss.endtimeid, ss.daydesc,
                    s.sectionid AS section_id, cs_o.subjectcode,
-                   COALESCE(sv.employeenumber, s.employeenumber) AS employee_number,
+                   COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) AS employee_number,
                    ss.sessionid, ss.versionid
             FROM schedule_sessions ss
             JOIN schedule_version sv ON ss.versionid = sv.versionid
@@ -21622,7 +21633,7 @@ def api_get_faculty_schedule():
                    ss.sessionid AS official_sessionid,
                    'Official' AS schedule_source,
                    f.lastname || ', ' || f.firstname AS instructor,
-                   sc.employeenumber, sc.sectionid,
+                   COALESCE(ss.employeenumber, sc.employeenumber) AS employeenumber, sc.sectionid,
                    TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
                    TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS time_range,
                    ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,
@@ -21635,7 +21646,7 @@ def api_get_faculty_schedule():
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             LEFT JOIN room r ON ss.roomid = r.roomid
-            LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+            LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
             LEFT JOIN semester sem ON sc.semesterid = sem.semesterid
@@ -22219,15 +22230,15 @@ def api_dss_suggest():
         # subject even though nothing of theirs actually survived. Mirrors the room-frequency
         # query below (6a), which already starts from schedule_sessions for the same reason.
         cur.execute("""
-            SELECT sc.employeenumber, COUNT(DISTINCT sv.scheduleid) AS freq
+            SELECT COALESCE(ss.employeenumber, sc.employeenumber) AS employeenumber, COUNT(DISTINCT sv.scheduleid) AS freq
             FROM schedule sc
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN schedule_version sv  ON sv.scheduleid = sc.scheduleid
             JOIN schedule_sessions ss ON ss.versionid = sv.versionid
             WHERE UPPER(cs.subjectcode) = UPPER(%s)
-              AND sc.employeenumber IS NOT NULL
+              AND COALESCE(ss.employeenumber, sc.employeenumber) IS NOT NULL
               AND sv.status IN ('Published', 'Archive', 'Draft')
-            GROUP BY sc.employeenumber
+            GROUP BY COALESCE(ss.employeenumber, sc.employeenumber)
             ORDER BY freq DESC
         """, (subject_code,))
         sched_fac_counts = {r['employeenumber']: int(r['freq']) for r in cur.fetchall()}
@@ -22920,7 +22931,7 @@ def _api_manual_faculty_load_impl():
                 JOIN schedule sc          ON sv.scheduleid = sc.scheduleid
                 JOIN semester s           ON sc.semesterid  = s.semesterid
                 JOIN timeslot ts          ON ss.starttimeid  = ts.timeid
-                WHERE sc.employeenumber = %s
+                WHERE COALESCE(ss.employeenumber, sc.employeenumber) = %s
                   AND s.academicyearid  = %s
                   AND s.semestertype    = %s
                   AND sv.status IN ('Published', 'Draft')
@@ -22941,13 +22952,15 @@ def _api_manual_faculty_load_impl():
                 SELECT DISTINCT ON (cs.subjectcode, sg.sectionid)
                        cs.subjectcode, cs.subjectname, sg.scheduleid,
                        COALESCE(sec.sectionname, '') AS sectionname,
-                       COALESCE(cs.creditunits, 0) AS creditunits
+                       COALESCE(cs.creditunits, 0) AS creditunits,
+                       """ + _shared_subjects.unit_share_sql('sv.versionid', 'me.emp') + """ AS unit_share
                 FROM schedule_version sv
                 JOIN schedule sg          ON sv.scheduleid  = sg.scheduleid
                 JOIN curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
                 LEFT JOIN sections sec     ON sg.sectionid   = sec.sectionid
                 JOIN semester s            ON sg.semesterid  = s.semesterid
-                WHERE sg.employeenumber = %s
+                CROSS JOIN (SELECT %s::varchar AS emp) me
+                WHERE """ + _shared_subjects.teaches_version_sql('sv', 'sg', 'me.emp') + """
                   AND s.academicyearid  = %s
                   AND s.semestertype    = %s
                   AND sv.status IN ('Published', 'Draft')
@@ -22955,7 +22968,13 @@ def _api_manual_faculty_load_impl():
                          CASE WHEN sv.status = 'Draft' THEN 0 ELSE 1 END,
                          sv.version_number DESC
             """, (emp_num, ay_id, sem))
-            assigned_subjects = [dict(r) for r in (rows or [])]
+            assigned_subjects = []
+            for r in (rows or []):
+                r = dict(r)
+                _share = float(r.pop('unit_share', 1) or 1)
+                if _share < 0.9999:   # shared subject: this faculty's share of the units
+                    r['creditunits'] = _units_num(float(r['creditunits'] or 0) * _share)
+                assigned_subjects.append(r)
         except Exception:
             assigned_subjects = []
 
@@ -23445,6 +23464,123 @@ def api_delete_shared_room(room_id):
                                    category='settings', color=_LOG_COLORS['settings'])
         conn.commit()
         _shared_rooms.invalidate()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/shared_subjects')
+@roles_required(ROLE_ADMIN, ROLE_ACAD_HEAD, ROLE_FACULTY)
+def api_shared_subject_limits():
+    """{SUBJECTCODE: max faculty} — the Manual Editor offers a faculty per slice for these."""
+    return jsonify({'success': True, 'limits': _shared_subjects.limits()})
+
+
+@app.route('/admin/settings/shared_subjects', methods=['GET'])
+@roles_required(ROLE_ADMIN)
+def api_list_shared_subjects():
+    """Shared subjects (split between several faculty per slice) + the subjects that can be added."""
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_subjects.ensure_table(cur)
+        cur.execute("""
+            SELECT p.subjectcode, p.max_faculty, p.updated_by,
+                   TO_CHAR(p.updated_at, 'YYYY-MM-DD HH12:MI AM') AS updated_at,
+                   (SELECT cs.subjectname FROM public.curriculumsubject cs
+                     WHERE UPPER(TRIM(cs.subjectcode)) = p.subjectcode
+                     ORDER BY cs.curriculumsubjectid DESC LIMIT 1) AS subjectname,
+                   COALESCE((SELECT ARRAY_AGG(DISTINCT cu.programcode ORDER BY cu.programcode)
+                               FROM public.curriculumsubject cs
+                               JOIN public.curriculum cu ON cu.curriculumid = cs.curriculumid
+                              WHERE UPPER(TRIM(cs.subjectcode)) = p.subjectcode), '{}') AS programs
+            FROM public.shared_subject_policy p
+            ORDER BY p.subjectcode""")
+        policies = [dict(r) for r in cur.fetchall()]
+        # One row per program x subject, so the picker can group subjects by program
+        # (a subject taught in two programs is listed under both; the policy itself is per subject).
+        cur.execute("""
+            SELECT DISTINCT ON (cu.programcode, UPPER(TRIM(cs.subjectcode)))
+                   cu.programcode, pr.programname,
+                   UPPER(TRIM(cs.subjectcode)) AS subjectcode, cs.subjectname
+            FROM public.curriculumsubject cs
+            JOIN public.curriculum cu ON cu.curriculumid = cs.curriculumid
+            LEFT JOIN public.programs pr ON pr.programcode = cu.programcode
+            WHERE COALESCE(TRIM(cs.subjectcode), '') <> ''
+            ORDER BY cu.programcode, UPPER(TRIM(cs.subjectcode)),
+                     COALESCE(cu.isactive, TRUE) DESC, cs.curriculumsubjectid DESC""")
+        subjects = [dict(r) for r in cur.fetchall()]
+        conn.commit()
+        return jsonify({'success': True, 'policies': policies, 'subjects': subjects})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/shared_subjects', methods=['POST'])
+@roles_required(ROLE_ADMIN)
+def api_save_shared_subject():
+    """Add or change a shared subject: {subjectcode, max_faculty (2-10)}."""
+    data = request.get_json(silent=True) or {}
+    code = _shared_subjects.norm_code(data.get('subjectcode'))
+    try:
+        max_faculty = int(data.get('max_faculty'))
+    except (TypeError, ValueError):
+        max_faculty = None
+    if not code or max_faculty is None:
+        return jsonify({'success': False, 'error': 'Choose a subject and enter how many faculty can share it.'}), 400
+    if not 2 <= max_faculty <= _shared_subjects.MAX_LIMIT:
+        return jsonify({'success': False,
+                        'error': f'Faculty per section must be from 2 to {_shared_subjects.MAX_LIMIT}.'}), 400
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_subjects.ensure_table(cur)
+        cur.execute("SELECT 1 FROM public.curriculumsubject WHERE UPPER(TRIM(subjectcode)) = %s LIMIT 1", (code,))
+        if not cur.fetchone():
+            return jsonify({'success': False, 'error': 'That subject is not in any curriculum.'}), 404
+        cur.execute("SELECT max_faculty FROM public.shared_subject_policy WHERE subjectcode = %s", (code,))
+        before = cur.fetchone()
+        cur.execute("""
+            INSERT INTO public.shared_subject_policy (subjectcode, max_faculty, updated_by, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (subjectcode) DO UPDATE
+               SET max_faculty = EXCLUDED.max_faculty, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+        """, (code, max_faculty, session.get('username')))
+        _write_activity_log_tx(
+            cur, 'Shared Subject Updated' if before else 'Shared Subject Added',
+            (f"{code}: up to {max_faculty} faculty per section (a faculty per slice)"
+             + (f" (was {before['max_faculty']})" if before else '')),
+            category='settings', color=_LOG_COLORS['settings'])
+        conn.commit()
+        _shared_subjects.invalidate()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': _public_error(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/admin/settings/shared_subjects/<path:code>', methods=['DELETE'])
+@roles_required(ROLE_ADMIN)
+def api_delete_shared_subject(code):
+    """Stop sharing a subject. Slices already saved keep their faculty until edited;
+    new saves give every slice the subject's one faculty again."""
+    code = _shared_subjects.norm_code(code)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        _shared_subjects.ensure_table(cur)
+        cur.execute("DELETE FROM public.shared_subject_policy WHERE subjectcode = %s RETURNING subjectcode", (code,))
+        if cur.fetchone():
+            _write_activity_log_tx(cur, 'Shared Subject Removed',
+                                   f"{code} is taught by one faculty per section again",
+                                   category='settings', color=_LOG_COLORS['settings'])
+        conn.commit()
+        _shared_subjects.invalidate()
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
@@ -24684,6 +24820,8 @@ def api_manual_existing_sessions():
                r.roomid, r.roomname,
                f.employeenumber,
                f.lastname || ', ' || f.firstname AS instructor,
+               -- Shared subjects: the subject's own (main) faculty, next to this slice's.
+               COALESCE(sv.employeenumber, sc.employeenumber) AS main_employeenumber,
                sv.status,
                TO_CHAR(ts_s.timevalue, 'HH12:MI AM') AS start_fmt,
                TO_CHAR(ts_e.timevalue, 'HH12:MI AM') AS end_fmt
@@ -24694,7 +24832,7 @@ def api_manual_existing_sessions():
         LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
         LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
         LEFT JOIN room r ON ss.roomid = r.roomid
-        LEFT JOIN faculty f ON COALESCE(sv.employeenumber, sc.employeenumber) = f.employeenumber
+        LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) = f.employeenumber
         LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
         LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
         WHERE {{status_clause}}
@@ -32579,9 +32717,9 @@ def reports_data():
             JOIN sections sec              ON sg.sectionid           = sec.sectionid
             JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
             JOIN programs p ON pyl.programcode = p.programcode
-            JOIN faculty f                 ON sg.employeenumber      = f.employeenumber
             JOIN semester sem              ON sg.semesterid          = sem.semesterid
             LEFT JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
+            JOIN faculty f                 ON COALESCE(ss.employeenumber, sg.employeenumber)      = f.employeenumber
             LEFT JOIN timeslot ts_s        ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e        ON ss.endtimeid           = ts_e.timeid
             LEFT JOIN room r               ON ss.roomid              = r.roomid
@@ -34357,10 +34495,10 @@ def _fetch_report_data(report_type, params, cur):
             JOIN sections sec              ON sg.sectionid           = sec.sectionid
             JOIN program_yearlevel pyl     ON sec.programyearlevelid = pyl.programyearlevelid
             JOIN programs p ON pyl.programcode = p.programcode
-            JOIN faculty f                 ON sg.employeenumber      = f.employeenumber
             JOIN semester sem              ON sg.semesterid          = sem.semesterid
             JOIN academicyear ay           ON sem.academicyearid     = ay.academicyearid
             LEFT JOIN schedule_sessions ss ON sv.versionid           = ss.versionid
+            JOIN faculty f                 ON COALESCE(ss.employeenumber, sg.employeenumber)      = f.employeenumber
             LEFT JOIN timeslot ts_s        ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e        ON ss.endtimeid           = ts_e.timeid
             LEFT JOIN room r               ON ss.roomid              = r.roomid
@@ -35321,7 +35459,7 @@ def faculty_dashboard():
                 LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
                 LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
                 LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
-                WHERE sc.employeenumber = %s
+                WHERE COALESCE(ss.employeenumber, sc.employeenumber) = %s
                   AND sv.status = 'Published'
                   AND sem.isactive = TRUE
                   AND ss.daydesc = %s
@@ -35382,18 +35520,20 @@ def faculty_dashboard():
             today_schedule.sort(key=_today_time_key)
 
             cursor.execute("""
-                SELECT COALESCE(SUM(cs.creditunits), 0) as total_units,
+                SELECT COALESCE(SUM(cs.creditunits * """ + _shared_subjects.unit_share_sql('sv.versionid', 'me.emp') + """), 0) as total_units,
                        COUNT(DISTINCT cs.subjectcode) as total_subjects
                 FROM schedule_version sv
                 JOIN schedule sc ON sv.scheduleid = sc.scheduleid
                 JOIN semester sem ON sc.semesterid = sem.semesterid
                 JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
-                WHERE sc.employeenumber = %s AND sv.status = 'Published'
+                CROSS JOIN (SELECT %s::varchar AS emp) me
+                -- Shared subjects: also where this faculty teaches some slices (their share of the units).
+                WHERE """ + _shared_subjects.teaches_version_sql('sv', 'sc', 'me.emp') + """ AND sv.status = 'Published'
                   AND sem.isactive = TRUE
             """, (emp_num,))
             stats = cursor.fetchone()
             if stats:
-                total_units = int(stats['total_units'])
+                total_units = _units_num(stats['total_units'])
                 total_subjects = int(stats['total_subjects'])
 
         # Inbox notifications & request summary
@@ -35513,7 +35653,8 @@ def faculty_teaching_assignment():
                      AND sv.source IS DISTINCT FROM 'local'
                 JOIN semester sem ON sem.semesterid = sc.semesterid
                 JOIN academicyear ay ON ay.academicyearid = sem.academicyearid
-                WHERE sc.employeenumber = %s
+                CROSS JOIN (SELECT %s::varchar AS emp) me
+                WHERE {_shared_subjects.teaches_version_sql('sv', 'sc', 'me.emp')}
                   AND NOT COALESCE(sem.isactive, FALSE)
                   AND sem.semstartdate > CURRENT_DATE
                   AND {_RELEASED_SECTION_SQL.format(sem_col='sc.semesterid', sec_col='sc.sectionid')}
@@ -36055,7 +36196,7 @@ def api_faculty_my_schedule_subjects():
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
             LEFT JOIN room r ON ss.roomid = r.roomid
-            WHERE sc.employeenumber = %s
+            WHERE COALESCE(ss.employeenumber, sc.employeenumber) = %s
               AND sem.isactive = TRUE
             ORDER BY cs.subjectcode, sec.sectionname, ss.daydesc, ts_s.timevalue
         """, [str(emp_num)]) or []
@@ -36539,7 +36680,7 @@ def _faculty_makeups(cur, emp_num, start, end):
         LEFT JOIN room r          ON r.roomid = cmr.new_roomid
         JOIN timeslot ts_s ON ts_s.timeid = cmr.new_starttimeid
         JOIN timeslot ts_e ON ts_e.timeid = cmr.new_endtimeid
-        WHERE cmr.status = 'Approved' AND sc.employeenumber = %s
+        WHERE cmr.status = 'Approved' AND COALESCE(cmr.submitted_by, sc.employeenumber) = %s
           AND cmr.requested_date BETWEEN %s AND %s
         ORDER BY cmr.requested_date, ts_s.timevalue
     """, (emp_num, start, end))
@@ -37370,7 +37511,7 @@ def api_faculty_schedule_full():
                 sec.sectionname, pyl.yearlevel, pyl.programcode,
                 ss.daydesc, r.roomname,
                 f.lastname || ', ' || f.firstname AS instructor,
-                sc.employeenumber,
+                COALESCE(ss.employeenumber, sc.employeenumber) AS employeenumber,
                 TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time,
                 TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
                 TO_CHAR(ts_s.timevalue, 'HH12:MI AM') || ' - ' ||
@@ -37385,7 +37526,7 @@ def api_faculty_schedule_full():
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
             LEFT JOIN program_yearlevel pyl ON sec.programyearlevelid = pyl.programyearlevelid
             LEFT JOIN room r ON ss.roomid = r.roomid
-            LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+            LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
             WHERE {' AND '.join(filters)}
@@ -39713,7 +39854,7 @@ def _consume_published_drafts(cur, semester_id, section_id, published_rows,
     used_version = None
     for d in drafts:
         cur.execute("""
-            SELECT sessionid, daydesc, starttimeid, endtimeid, roomid
+            SELECT sessionid, daydesc, starttimeid, endtimeid, roomid, employeenumber
             FROM public.schedule_sessions WHERE versionid = %s ORDER BY sessionid
         """, (d['versionid'],))
         sessions = cur.fetchall() or []
@@ -39741,9 +39882,9 @@ def _consume_published_drafts(cur, semester_id, section_id, published_rows,
         new_vid = cur.fetchone()['versionid']
         for s in remaining:
             cur.execute("""
-                INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (new_vid, s['daydesc'], s['starttimeid'], s['endtimeid'], s['roomid']))
+                INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid, employeenumber)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (new_vid, s['daydesc'], s['starttimeid'], s['endtimeid'], s['roomid'], s['employeenumber']))
         used_version = version_number
     return used_version
 
@@ -39973,7 +40114,12 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
     # even for subjects the caller never touched. Reusing the version row created for the
     # first slice keeps every slice of that subject under one version, as intended.
     _sched_to_version = {}
+    _version_faculty = {}          # versionid -> the subject's (main) faculty
+    _shared_tbl = _shared_subjects.load_limits(cur)   # Settings > Shared Subjects
     _subjects_inserted: set = set()
+    # Shared subject: its (main) faculty is the one teaching most of its slices (first seen
+    # on a tie), so it doesn't depend on which slice happens to come first.
+    _shared_main = _shared_subjects.main_faculty(schedule_data, _shared_tbl)
 
     for cls in schedule_data:
         s_code = cls.get('subjectcode') or cls.get('subject_code')
@@ -39997,6 +40143,9 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
 
         # Resolve curriculumsubjectid from pre-loaded map (no DB round-trip)
         code_up  = s_code.upper()
+        slice_fac = f_num
+        if _shared_subjects.norm_code(code_up) in _shared_main:
+            f_num = _shared_main[_shared_subjects.norm_code(code_up)]
         cls_sem  = cls.get('sem') or cls.get('semester', '')
         cs_id    = (_cs_full.get((code_up, year_level, cls_sem))
                     or _cs_yl.get((code_up, year_level)))
@@ -40021,13 +40170,20 @@ def _insert_batch(cur, schedule_data, semester_id, target_status, version_number
                   bool(reasons), json.dumps(reasons) if reasons else None))
             ver_id = cur.fetchone()['versionid']
             _sched_to_version[sched_id] = ver_id
+            _version_faculty[ver_id] = f_num
 
         _subjects_inserted.add(code_up)
 
+        # Shared subject: a slice taught by someone other than the subject's (main) faculty
+        # keeps its own faculty; every other slice stores NULL = the subject's faculty.
+        sess_fac = _shared_subjects.slice_faculty(code_up, slice_fac, _shared_tbl)
+        if sess_fac is not None and str(sess_fac) == str(_version_faculty.get(ver_id) or ''):
+            sess_fac = None
+
         # Insert ONE schedule_sessions row per day (paired subjects get two rows under the same version)
         for day in days_to_insert:
-            cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid) VALUES (%s, %s, %s, %s, %s)",
-                        (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None))
+            cur.execute("INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid, employeenumber) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (ver_id, day, s_id, e_id, r_id if str(r_id).isdigit() else None, sess_fac))
 
     # Subjects the caller flagged incomplete that never got a single resolved
     # slice — no schedule_version row exists for them at all (see docstring).
@@ -40087,7 +40243,7 @@ def _fetch_section_sessions(cur, program, year_level, sem_id, exclude_codes=None
         status_filter = "'Draft', 'Published'"
 
     cur.execute(f"""
-        SELECT cs.subjectcode, cs.semester, COALESCE(sv.employeenumber, sg.employeenumber) AS employeenumber,
+        SELECT cs.subjectcode, cs.semester, COALESCE(ss.employeenumber, sv.employeenumber, sg.employeenumber) AS employeenumber,
                ss.roomid, ss.daydesc,
                t_s.timevalue::text AS start_time,
                t_e.timevalue::text AS end_time,
@@ -41643,7 +41799,7 @@ def _load_cfg_for(ay_id, sem, *, cur=None, section_id=None, sem_id=None):
 _MERGED_OCC_SQL = """
     SELECT ss.sessionid, ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid,
            sc.sectionid, sc.semesterid, UPPER(cs.subjectcode) AS subjectcode,
-           COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+           COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS employeenumber,
            sec.sectionname, pyl.programcode, pyl.yearlevel
     FROM schedule_sessions ss
     JOIN schedule_version sv ON sv.versionid = ss.versionid
@@ -41869,7 +42025,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
         _sup_sql = ''
         cur.execute("""
             SELECT ss.roomid,
-                   sc.employeenumber          AS faculty_id,
+                   COALESCE(ss.employeenumber, sc.employeenumber)          AS faculty_id,
                    sc.sectionid               AS sectionid,
                    ss.daydesc                 AS day,
                    ts_s.timevalue             AS start_time,
@@ -41963,7 +42119,7 @@ def _check_cross_schedule_conflicts(schedule_data, program, year_level, term, ac
             # the Published rows so an identical Published slot is reported first.
             cur.execute("""
                 SELECT ss.roomid,
-                       COALESCE(sv.employeenumber, sc.employeenumber) AS faculty_id,
+                       COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS faculty_id,
                        sc.sectionid               AS sectionid,
                        ss.daydesc                 AS day,
                        ts_s.timevalue             AS start_time,
@@ -42271,7 +42427,7 @@ def _merge_candidates(code, term, acad_year_id, section_id, limit=3):
         LEFT JOIN timeslot ts_s     ON ss.starttimeid = ts_s.timeid
         LEFT JOIN timeslot ts_e     ON ss.endtimeid = ts_e.timeid
         LEFT JOIN room r            ON r.roomid = ss.roomid
-        LEFT JOIN faculty f         ON f.employeenumber = COALESCE(sv.employeenumber, sc.employeenumber)
+        LEFT JOIN faculty f         ON f.employeenumber = COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber)
         WHERE sem.academicyearid = %s AND UPPER(sem.semestertype) = UPPER(%s)
           AND UPPER(cs.subjectcode) = %s
           AND sv.status IN ('Published', 'Draft') AND sv.source IS DISTINCT FROM 'local'
@@ -43505,6 +43661,15 @@ def api_save_draft():
                 'violations': _self_overlaps,
             }), 400
 
+        # Settings > Shared Subjects: no more faculty per section than the subject allows.
+        _too_many = _shared_subjects.check_faculty_count(schedule_list)
+        if _too_many:
+            t = _too_many[0]
+            return jsonify({'success': False,
+                            'error': (f"Cannot save: {t['subjectcode']} has {t['count']} faculty across its "
+                                      f"slices, but up to {t['limit']} may share it per section "
+                                      "(Settings → Shared Subjects).")}), 400
+
         _fmap_pre = _load_faculty_map()
         # HC16 group model: None under the legacy model (the call below is then exactly
         # the previous one).
@@ -44099,7 +44264,7 @@ def api_draft_sessions():
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum cu ON cs.curriculumid = cu.curriculumid
             LEFT JOIN sections sec ON sc.sectionid = sec.sectionid
-            LEFT JOIN faculty f ON COALESCE(sv.employeenumber, sc.employeenumber) = f.employeenumber
+            LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid   = ts_e.timeid
@@ -44327,7 +44492,7 @@ def _sync_mergedclass_for_semester(cur, sem_id):
         JOIN public.curriculumsubject cs ON cs.curriculumsubjectid = s.curriculumsubjectid
         JOIN public.curriculum c         ON c.curriculumid = cs.curriculumid
         JOIN public.sections sec         ON sec.sectionid = s.sectionid
-        WHERE sv.status = 'Published' AND s.semesterid = %s AND s.employeenumber IS NOT NULL
+        WHERE sv.status = 'Published' AND s.semesterid = %s AND COALESCE(ss.employeenumber, s.employeenumber) IS NOT NULL
     """, (sem_id,))
     all_rows = cur.fetchall() or []
 
@@ -44627,7 +44792,7 @@ def api_local_republish_impact():
         if codes:
             for o in query_db("""
                 SELECT UPPER(cs.subjectcode) AS code, ss.daydesc, t1.timevalue AS st, t2.timevalue AS et,
-                       ss.roomid, COALESCE(sv.employeenumber, s.employeenumber) AS fac
+                       ss.roomid, COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber) AS fac
                 FROM public.schedule_version sv
                 JOIN public.schedule s ON s.scheduleid = sv.scheduleid
                 JOIN public.semester sm ON sm.semesterid = s.semesterid
@@ -44689,6 +44854,16 @@ def api_approve_schedule():
                 'success': False,
                 'error':   'No sessions to publish. Please add schedule entries before approving.',
             }), 400
+
+        # Settings > Shared Subjects: no more faculty per section than the subject allows
+        # (same rule as Save as Draft).
+        _too_many = _shared_subjects.check_faculty_count(sched_data)
+        if _too_many:
+            t = _too_many[0]
+            return jsonify({'success': False,
+                            'error': (f"Cannot publish: {t['subjectcode']} has {t['count']} faculty across its "
+                                      f"slices, but up to {t['limit']} may share it per section "
+                                      "(Settings → Shared Subjects).")}), 400
 
         # Completeness gate on the SUBMITTED rows themselves (the saved-Draft
         # is_incomplete gate below still applies too): a missing or unresolved
@@ -45296,9 +45471,11 @@ def api_faculty_teaching_assignments():
                 JOIN schedule sc ON sv.scheduleid = sc.scheduleid
                 JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
                 JOIN semester sem ON sc.semesterid = sem.semesterid
-                WHERE sc.employeenumber = %s
-                  AND sem.academicyearid = %s
-                  AND sem.semestertype   = %s
+                CROSS JOIN (SELECT %(emp)s::varchar AS emp) me
+                -- Shared subjects: also the subjects where this faculty teaches some slices.
+                WHERE """ + _shared_subjects.teaches_version_sql('sv', 'sc', 'me.emp') + """
+                  AND sem.academicyearid = %(ay)s
+                  AND sem.semestertype   = %(sem)s
                   AND sv.status IN ('Published','Draft')
             ),
             ranked AS (
@@ -45310,6 +45487,8 @@ def api_faculty_teaching_assignments():
                 cs.subjectcode,
                 cs.subjectname,
                 COALESCE(cs.creditunits,0) AS units,
+                -- Shared subject: this faculty's share of the units (faculty_load._apply_unit_share).
+                """ + _shared_subjects.unit_share_sql('sv.versionid', 'COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber)') + """ AS unit_share,
                 -- Actual scheduled duration of THIS time slice, not the curriculum's
                 -- static official hour count — splitting into more slices must add
                 -- hours here without touching units above.
@@ -45330,7 +45509,7 @@ def api_faculty_teaching_assignments():
                 COALESCE(TO_CHAR(sem.semstartdate,'MM/DD/YYYY'),'—') AS effectivity,
                 sv.status,
                 -- Merged-event identity (HC16/HC17 group model), JSON-safe.
-                COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+                COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS employeenumber,
                 ss.roomid AS roomid,
                 TO_CHAR(ts_s.timevalue,'HH24:MI') AS start,
                 TO_CHAR(ts_e.timevalue,'HH24:MI') AS "end"
@@ -45345,12 +45524,17 @@ def api_faculty_teaching_assignments():
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
+            -- Shared subject: only this faculty's own slices (a slice with no faculty of its
+            -- own follows the subject's faculty, as every slice did before).
+            WHERE (ss.employeenumber IS NULL AND sc.employeenumber = %(emp)s)
+               OR ss.employeenumber = %(emp)s
             ORDER BY cs.subjectcode, ts_s.timevalue
         """
-        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')"), (emp_num, ay_id, sem))
-        sessions = [dict(r) for r in (cur.fetchall() or [])]
-        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE status = 'Published'"), (emp_num, ay_id, sem))
-        _published_raw = [dict(r) for r in (cur.fetchall() or [])
+        _ta_params = {'emp': emp_num, 'ay': ay_id, 'sem': sem}
+        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE (has_draft AND status = 'Draft') OR (NOT has_draft AND status = 'Published')"), _ta_params)
+        sessions = [faculty_load._apply_unit_share(dict(r)) for r in (cur.fetchall() or [])]
+        cur.execute(_TA_SQL.replace('__RANK_WHERE__', "WHERE status = 'Published'"), _ta_params)
+        _published_raw = [faculty_load._apply_unit_share(dict(r)) for r in (cur.fetchall() or [])
                           if (r.get('status') or 'Published') == 'Published']
 
         # HC16/HC17 group model: merged classes are identified ONLY by HC16 event
@@ -45918,8 +46102,8 @@ def api_restore_version(version_id):
             # schedule.employeenumber mirrors the live Published faculty, so a restored
             # Draft never changes it (see _find_or_create_schedule).
             cur.execute("""
-                INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid)
-                SELECT %s, daydesc, starttimeid, endtimeid, roomid
+                INSERT INTO public.schedule_sessions (versionid, daydesc, starttimeid, endtimeid, roomid, employeenumber)
+                SELECT %s, daydesc, starttimeid, endtimeid, roomid, employeenumber
                 FROM   public.schedule_sessions
                 WHERE  versionid = %s
             """, (new_vid, src['versionid']))
@@ -46012,8 +46196,8 @@ def api_overlay_sessions(version_id):
             JOIN   schedule sg          ON sv.scheduleid          = sg.scheduleid
             JOIN   curriculumsubject cs  ON sg.curriculumsubjectid = cs.curriculumsubjectid
             JOIN   curriculum c          ON cs.curriculumid        = c.curriculumid
-            LEFT JOIN faculty f          ON COALESCE(sv.employeenumber, sg.employeenumber) = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid         = sv.versionid
+            LEFT JOIN faculty f          ON COALESCE(ss.employeenumber, sv.employeenumber, sg.employeenumber) = f.employeenumber
             LEFT JOIN room r             ON ss.roomid              = r.roomid
             LEFT JOIN timeslot ts_s      ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e      ON ss.endtimeid           = ts_e.timeid
@@ -46052,8 +46236,8 @@ def api_version_sessions():
             JOIN curriculumsubject cs  ON sc.curriculumsubjectid  = cs.curriculumsubjectid
             JOIN sections sec          ON sc.sectionid            = sec.sectionid
             JOIN program_yearlevel pyl ON sec.programyearlevelid  = pyl.programyearlevelid
-            LEFT JOIN faculty f        ON COALESCE(sv.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN schedule_sessions ss ON ss.versionid        = sv.versionid
+            LEFT JOIN faculty f        ON COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN room r           ON ss.roomid               = r.roomid
             LEFT JOIN timeslot ts_s    ON ss.starttimeid          = ts_s.timeid
             LEFT JOIN timeslot ts_e    ON ss.endtimeid            = ts_e.timeid
@@ -46102,14 +46286,14 @@ def api_load_draft(version_id):
         cur.execute("""
             SELECT cs.subjectcode AS subject_code, cs.subjectname AS description, cs.lecturehours AS lec_hours,
                    cs.laboratoryhours AS lab_hours, cs.creditunits AS units, c.programcode AS course,
-                   COALESCE(sv.employeenumber, sc.employeenumber) AS faculty_id, CONCAT(f.lastname, ', ', f.firstname) AS instructor,
+                   COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS faculty_id, CONCAT(f.lastname, ', ', f.firstname) AS instructor,
                    ss.daydesc, TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time, TO_CHAR(ts_e.timevalue, 'HH24:MI') AS end_time,
                    r.roomname AS room, r.roomid, sv.version_number AS row_version
             FROM schedule_version sv JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN schedule_sessions ss ON ss.versionid = sv.versionid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
-            LEFT JOIN faculty f ON COALESCE(sv.employeenumber, sc.employeenumber) = f.employeenumber
+            LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid
@@ -46177,7 +46361,7 @@ def api_schedule_latest_draft():
             SELECT cs.subjectcode AS subject_code, cs.subjectname AS description,
                    cs.lecturehours AS lec_hours, cs.laboratoryhours AS lab_hours,
                    cs.creditunits AS units, c.programcode AS course,
-                   sc.employeenumber AS faculty_id,
+                   COALESCE(ss.employeenumber, sc.employeenumber) AS faculty_id,
                    COALESCE(f.lastname || ', ' || f.firstname, 'TBA') AS instructor,
                    ss.daydesc,
                    TO_CHAR(ts_s.timevalue, 'HH24:MI') AS start_time,
@@ -46190,7 +46374,7 @@ def api_schedule_latest_draft():
             JOIN schedule_sessions ss ON ss.versionid           = sv.versionid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c         ON cs.curriculumid        = c.curriculumid
-            LEFT JOIN faculty f       ON sc.employeenumber      = f.employeenumber
+            LEFT JOIN faculty f       ON COALESCE(ss.employeenumber, sc.employeenumber)      = f.employeenumber
             LEFT JOIN room r          ON ss.roomid              = r.roomid
             LEFT JOIN timeslot ts_s   ON ss.starttimeid         = ts_s.timeid
             LEFT JOIN timeslot ts_e   ON ss.endtimeid           = ts_e.timeid
@@ -46810,6 +46994,10 @@ def _run_startup_migrations():
         _step('sm_hc17_policy_groups', [_mg_schema.hc17_schema_sql()])
     except OSError as _e:
         print(f'[startup migration] sm_merge_groups: {_e}')
+
+    # Settings > Shared Subjects + the per-slice faculty column (schedule_sessions.employeenumber,
+    # NULL = the subject's faculty). Additive; see migrations/2026-11-26_shared_subjects.sql.
+    _step('sm_shared_subjects', list(_shared_subjects.TABLE_DDL))
 
     _cur.execute("RESET lock_timeout")   # pooled connection — don't leak the setting
     _c.commit()

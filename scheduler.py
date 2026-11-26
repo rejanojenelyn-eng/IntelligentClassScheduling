@@ -3089,7 +3089,7 @@ class IntelligentScheduler:
             rows = query_db("""
                 SELECT DISTINCT ON (cs.subjectcode)
                     cs.subjectcode,
-                    sg.employeenumber   AS faculty,
+                    COALESCE(ss.employeenumber, sg.employeenumber)   AS faculty,
                     r.roomid            AS room_id,
                     r.roomname          AS room_name
                 FROM public.schedule_version sv
@@ -3505,7 +3505,7 @@ class IntelligentScheduler:
             return defaultdict(list), defaultdict(list)
         rows = query_db("""
             SELECT ss.roomid,
-                   sc.employeenumber          AS faculty_id,
+                   COALESCE(ss.employeenumber, sc.employeenumber)          AS faculty_id,
                    ss.daydesc                 AS day,
                    ts_s.timevalue             AS start_time,
                    ts_e.timevalue             AS end_time,
@@ -3713,7 +3713,7 @@ class IntelligentScheduler:
             JOIN schedule sc ON sv.scheduleid = sc.scheduleid
             JOIN curriculumsubject cs ON sc.curriculumsubjectid = cs.curriculumsubjectid
             JOIN curriculum c ON cs.curriculumid = c.curriculumid
-            LEFT JOIN faculty f ON sc.employeenumber = f.employeenumber
+            LEFT JOIN faculty f ON COALESCE(ss.employeenumber, sc.employeenumber) = f.employeenumber
             LEFT JOIN room r ON ss.roomid = r.roomid
             LEFT JOIN timeslot ts_s ON ss.starttimeid = ts_s.timeid
             LEFT JOIN timeslot ts_e ON ss.endtimeid = ts_e.timeid

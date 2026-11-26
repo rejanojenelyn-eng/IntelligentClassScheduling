@@ -86,6 +86,26 @@
         box-shadow: 0 1px 2px rgba(0,0,0,0.25);
     }
     .schedule-pill.pill-slice-active .pill-slice-tag { background: #f0c030; color: #3a2a00; }
+    /* ── Shared subject (Settings > Shared Subjects): the slice's faculty next to its number ── */
+    .ts-fac-note { font-size: .66rem; color: #8a6d00; margin-top: 3px; }
+    /* Shared subject: the faculty sharing it, under the faculty card */
+    .sfp { margin-top: 8px; border: 1px solid #e6d3d3; border-radius: 6px; background: #fff; overflow: hidden; }
+    .sfp[hidden] { display: none; }
+    .sfp-hd { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px;
+              background: #f8eeee; color: #7a0000; font-size: .66rem; font-weight: 900; letter-spacing: .6px; }
+    .sfp-hd span:last-child { color: #8a6d6d; font-weight: 800; }
+    .sfp-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid #f1e6e6; }
+    .sfp-av { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; color: #fff; font-size: .7rem; font-weight: 800;
+              display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .sfp-info { flex: 1 1 auto; min-width: 0; }
+    .sfp-name { font-size: .78rem; font-weight: 900; color: #2c3e50; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sfp-type { font-size: .64rem; color: #7f8c8d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sfp-meta { font-size: .62rem; font-weight: 800; color: #8a1c1c; white-space: nowrap; }
+    .sfp-del { border: 0; background: none; color: #b0a0a0; cursor: pointer; padding: 2px 4px; }
+    .sfp-del:hover { color: #c0392b; }
+    .sfp-add { padding: 7px 10px; border-top: 1px solid #f1e6e6; }
+    .sfp-add select { width: 100%; height: 30px; font-size: .74rem; border: 1px dashed #c9a9a9; border-radius: 5px;
+                      background: #fffafa; color: #7a0000; padding: 0 6px; }
     /* ── Subject-focus pill highlight — white glow when subject is selected from curriculum guide ── */
     .schedule-pill.pill-subject-focus {
         outline: 2.5px solid rgba(255,255,255,0.95) !important; outline-offset: 1px; z-index: 12 !important;
@@ -1455,16 +1475,14 @@
                     <span class="right-subj-code" id="right-subj-code">--</span>
                     <span class="right-subj-name" id="right-subj-name">Select a subject from the curriculum guide</span>
                 </div>
-                <span class="right-subj-badge" id="right-subj-badge">-</span>
+                <!-- Status badge + hours scheduled ("3 / 3 hrs"), filled by _updateUnitProgress -->
+                <div class="right-subj-side">
+                    <span class="right-subj-badge" id="right-subj-badge">-</span>
+                    <span id="unit-progress-val" class="unit-progress-val" title="Hours scheduled">-</span>
+                </div>
             </div>
             <!-- HC16 group model: Merge Group badge/details (filled by manualEditor.mergeGroups.js) -->
             <div id="mg-badge" hidden></div>
-
-            <!-- Unit Progress row -->
-            <div class="unit-progress-row">
-                <span class="unit-progress-label">HOURS SCHEDULED</span>
-                <span id="unit-progress-val" class="unit-progress-val">-</span>
-            </div>
 
             <!-- Hidden legacy unit instruction (kept for JS compat) -->
             <div style="display:none;" aria-hidden="true">
@@ -1534,6 +1552,8 @@
                     </div>
                 </div>
             </div>
+            <!-- Settings > Shared Subjects: the faculty sharing the open subject (filled by _renderSharedFacPanel) -->
+            <div id="shared-fac-panel" class="sfp" hidden></div>
             <div style="display:none;" aria-hidden="true">
                 <span id="fac-total-units">-</span>
                 <span id="fac-avail-units">-</span>
@@ -1713,6 +1733,7 @@
      data-rooms="{{ rooms_json | e }}"
      data-shared-rooms="{{ shared_room_limits_json | default('{}') | e }}"
      data-shared-flex="{{ shared_room_flex_json | default('[]') | e }}"
+     data-shared-subjects="{{ shared_subject_limits_json | default('{}') | e }}"
      data-faculty="{{ faculty_json | e }}"
      data-init-mode="{{ init_mode }}"
      data-init-prog="{{ init_prog }}"
@@ -1881,15 +1902,21 @@ function _activeSlicePillKey() {
 // Every one is raised and labelled "SLICE n"; the selected one also gets the gold ring
 // (pill-slice-active) and "SELECTED" — so you see which pills belong together and which
 // one you are editing. Re-applied by the renderers (_markSlicePill) and on selection.
+// Shared subject: {pill key: " · LASTNAME"} of the same slices, rebuilt with the keys.
+let _slicePillFacSuffix = {};
 function _slicePillKeys() {
     const out = {};
+    _slicePillFacSuffix = {};
     const code = _currentSubjectCode || '';
     if (!code || typeof document.querySelectorAll !== 'function') return out;
     document.querySelectorAll('#time-slots-container > .ts-row').forEach((row, i) => {
         const day = row.querySelector('.ts-day-sel')?.value || '';
         const startIdx = _TS_TIMES.indexOf(row.querySelector('.ts-start-hidden')?.value || '') + 1;
         const key = `${code}_${day}_${startIdx}`;
-        if (day && startIdx > 0 && !(key in out)) out[key] = i + 1;
+        if (day && startIdx > 0 && !(key in out)) {
+            out[key] = i + 1;
+            if (typeof _sliceFacultySuffix === 'function') _slicePillFacSuffix[key] = _sliceFacultySuffix(row);
+        }
     });
     return out;
 }
@@ -1906,7 +1933,8 @@ function _markSlicePill(pill, keys) {
         tag.className = 'pill-slice-tag';
         pill.insertBefore(tag, pill.firstChild);
     }
-    if (tag) tag.textContent = active ? `✓ SLICE ${n}` : `SLICE ${n}`;
+    const facSfx = _slicePillFacSuffix[pill.dataset.pillKey] || '';
+    if (tag) tag.textContent = (active ? `✓ SLICE ${n}` : `SLICE ${n}`) + facSfx;
 }
 
 function _refreshSlicePills() {
@@ -3098,6 +3126,14 @@ window.confirmAndPlace = async function() {
         }
     }
 
+    // Shared subject (Settings > Shared Subjects): this slice's own faculty, handed over by
+    // the save loops from its card. Conflict checks and the saved entry use it.
+    const _sliceFacOv = window._sliceFacultyOverride;
+    if (_sliceFacOv && _sliceFacOv.id) {
+        facVal  = String(_sliceFacOv.id);
+        facName = _sliceFacOv.name || facName;
+    }
+
     if (!subjSel.value || !facVal || !roomVal || !dayVal || !startVal || !endVal) {
         // Say exactly what is missing (the slice card can look complete while e.g. the
         // faculty was never actually picked after a Reassign Faculty).
@@ -3746,6 +3782,262 @@ window.SHARED_ROOM_LIMITS = (() => {
 })();
 // Settings > Class Merging rule codes (e.g. ['NSTP']): in a shared room, two classes of
 // subjects under the same rule may partly overlap (shared_rooms.flex_tag on the server).
+
+/* ── Settings > Shared Subjects: {SUBJECTCODE: max faculty per section} ──
+   The faculty sharing the subject are listed under the faculty card (#shared-fac-panel:
+   the subject's faculty + the ones added there, up to the limit); each slice picks one of
+   them in its FACULTY field ('' = the subject's faculty). The calendar pill reads
+   "SLICE n · LASTNAME"; each faculty is checked for conflicts and credited only the hours
+   of their own slices. Other subjects keep one faculty for every slice, as before. */
+// A finished action ("Schedule Published", "Saved as Draft", "Schedule Deleted"): a small
+// corner toast that needs no click (base.acad.js showCornerToast); a modal only as fallback.
+function _notifyDone(title, msg, duration) {
+    if (typeof showCornerToast === 'function') { showCornerToast(title, msg, 'success', duration); return Promise.resolve(); }
+    return showValidationModal(title, msg);
+}
+window.SHARED_SUBJECT_LIMITS = (() => {
+    try { return JSON.parse(document.getElementById('app-init-data')?.dataset.sharedSubjects || '{}'); }
+    catch (e) { return {}; }
+})();
+function _normSubjCode(code) { return String(code || '').toUpperCase().split(/\s+/).filter(Boolean).join(' '); }
+function _sharedSubjectLimit(code) {
+    return Number((window.SHARED_SUBJECT_LIMITS || {})[_normSubjCode(code)] || 0);
+}
+// The subject's (main) faculty: the locked/selected faculty of the open subject.
+function _mainFacultyId() {
+    return String(_lockedFacultyId || document.getElementById('sel_faculty')?.value || '');
+}
+function _facultyById(id) {
+    return (id && typeof allFaculty !== 'undefined') ? allFaculty.find(f => String(f.id) === String(id)) || null : null;
+}
+function _facLastName(id, fallbackName) {
+    if (!id || String(id).toUpperCase() === 'TBA') return '';
+    const name = (_facultyById(id) || {}).name || fallbackName || '';
+    return String(name).split(',')[0].trim().toUpperCase();
+}
+// A slice row's own faculty {id, name} (shared subject, a faculty other than the main one
+// picked on the card), or null = the subject's faculty.
+function _sliceFacultyFor(row) {
+    if (!row || !_sharedSubjectLimit(_currentSubjectCode)) return null;
+    const id = row.querySelector('.ts-fac-sel')?.value || '';
+    if (!id) return null;
+    const f = _facultyById(id);
+    return { id: String(id), name: f ? f.name : String(id) };
+}
+// Shared subject: the faculty a LOADED slice opens with on its card — its own faculty when
+// that is someone other than the subject's faculty, else '' (= the subject's faculty).
+function _sliceOwnFacultyFromJson(existingJson) {
+    if (!existingJson || !_sharedSubjectLimit(_currentSubjectCode)) return '';
+    try {
+        const own = String(JSON.parse(existingJson).employeenumber || '');
+        return (own && own !== _mainFacultyId()) ? own : '';
+    } catch (e) { return ''; }
+}
+// Faculty id shown for a slice row: its own pick, else the subject's faculty.
+function _sliceFacultyId(row) {
+    const sf = _sliceFacultyFor(row);
+    return sf ? sf.id : _mainFacultyId();
+}
+// " · REYES" for a shared subject's slice, '' otherwise.
+function _sliceFacultySuffix(row) {
+    if (!row || !_sharedSubjectLimit(_currentSubjectCode)) return '';
+    const ln = _facLastName(_sliceFacultyId(row), document.getElementById('fac_display_name')?.value);
+    return ln ? ` · ${ln}` : '';
+}
+// The FACULTY field of a shared subject's slice card. `selectedId` '' = the subject's faculty.
+function _sliceFacultyFieldHtml(id, selectedId) {
+    const lim = _sharedSubjectLimit(_currentSubjectCode);
+    if (!lim) return '';
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    return `
+        <div class="ts-field-row ts-fac-row">
+            <div class="ts-field-icon"><i class="fas fa-user-friends"></i></div>
+            <div class="ts-field-body">
+                <div class="ts-label">FACULTY</div>
+                <select class="ts-fac-sel ts-sel" id="ts-fac-${id}" onclick="event.stopPropagation()"
+                        onchange="onTsFacultyChange(${id})">${_sliceFacultyOptionsHtml(selectedId)}</select>
+            </div>
+        </div>`;
+}
+// Options of a slice's FACULTY select: only the faculty assigned to the subject (the panel
+// under the faculty card). '' = the subject's faculty, listed first by name.
+function _sliceFacultyOptionsHtml(selectedId) {
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const main = _mainFacultyId();
+    const mainName = (_facultyById(main) || {}).name || document.getElementById('fac_display_name')?.value || 'Subject faculty';
+    const ids = _sharedFacultyIds().filter(x => x !== main);
+    if (selectedId && selectedId !== main && !ids.includes(String(selectedId))) ids.push(String(selectedId));
+    return `<option value="">${esc(mainName)}</option>` + ids.map(fid =>
+        `<option value="${esc(fid)}"${String(fid) === String(selectedId) ? ' selected' : ''}>${esc((_facultyById(fid) || {}).name || fid)}</option>`
+    ).join('');
+}
+
+/* The faculty assigned to the open shared subject: the subject's faculty (the card above),
+   then the ones added in the panel, then any a slice already uses (e.g. loaded slices).
+   Added faculty are kept per section + subject for this page. */
+const _sharedCoFaculty = {};
+function _sharedKey() {
+    return `${document.getElementById('sel_section')?.value || ''}|${_normSubjCode(_currentSubjectCode)}`;
+}
+function _sharedFacultyIds() {
+    const main = _mainFacultyId();
+    const out = [];
+    const add = x => { x = String(x || ''); if (x && x.toUpperCase() !== 'TBA' && !out.includes(x)) out.push(x); };
+    add(main);
+    (_sharedCoFaculty[_sharedKey()] || []).forEach(add);
+    _sliceFacSelects().forEach(s => add(s.value));
+    return out;
+}
+// The FACULTY selects of the open subject's slice cards.
+function _sliceFacSelects() {
+    return [...document.querySelectorAll('.ts-row')].map(r => r.querySelector('.ts-fac-sel')).filter(Boolean);
+}
+function _refreshSliceFacultySelects() {
+    _sliceFacSelects().forEach(s => {
+        const v = s.value;
+        s.innerHTML = _sliceFacultyOptionsHtml(v);
+        s.value = v;
+    });
+}
+function _sharedFacTypeLabel(fid) {
+    const info = (typeof _facTypeCache !== 'undefined') ? _facTypeCache[fid] : null;
+    const f = _facultyById(fid) || {};
+    const t = (info && info.typename) || f.typename || '';
+    const d = (info && info.has_designation && info.designation_name) ? info.designation_name : '';
+    return d ? `${t} · ${d}` : t;
+}
+function _renderSharedFacPanel() {
+    try {
+        const box = document.getElementById('shared-fac-panel');
+        if (!box) return;
+        const lim  = _sharedSubjectLimit(_currentSubjectCode);
+        const main = _mainFacultyId();
+        if (!lim || !main || main.toUpperCase() === 'TBA' || (typeof IS_LOCAL !== 'undefined' && IS_LOCAL)) {
+            box.hidden = true; box.innerHTML = ''; return;
+        }
+        const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const ids = _sharedFacultyIds();
+        const used = {};                                   // faculty id -> slices taught
+        document.querySelectorAll('.ts-row').forEach(r => {
+            const fid = _sliceFacultyId(r);
+            used[fid] = (used[fid] || 0) + 1;
+        });
+        const others = ids.filter(x => x !== main);
+        let html = `<div class="sfp-hd"><span><i class="fas fa-user-friends"></i> SHARED SUBJECT</span>` +
+                   `<span>${ids.length} of ${lim} faculty</span></div>`;
+        others.forEach(fid => {
+            const f = _facultyById(fid) || {};
+            const n = used[fid] || 0;
+            html += `<div class="sfp-row">
+                <div class="sfp-av" data-fid="${esc(fid)}"></div>
+                <div class="sfp-info"><div class="sfp-name">${esc(f.name || fid)}</div>
+                    <div class="sfp-type" data-type-fid="${esc(fid)}">${esc(_sharedFacTypeLabel(fid))}</div></div>
+                <span class="sfp-meta">${n ? `${n} slice${n > 1 ? 's' : ''}` : 'no slice yet'}</span>
+                <button type="button" class="sfp-del" title="Remove from this subject"
+                        onclick="removeSharedFaculty('${esc(fid)}')"><i class="fas fa-times"></i></button>
+            </div>`;
+        });
+        if (ids.length < lim) {
+            const opts = (typeof allFaculty !== 'undefined' ? allFaculty : [])
+                .filter(f => !ids.includes(String(f.id)) && String(f.id).toUpperCase() !== 'TBA')
+                .map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
+            html += `<div class="sfp-add"><select onchange="addSharedFaculty(this.value)" aria-label="Add a faculty to this subject">
+                <option value="">+ Add faculty (up to ${lim})</option>${opts}</select></div>`;
+        }
+        box.innerHTML = html;
+        box.hidden = false;
+        box.querySelectorAll('.sfp-av').forEach(el => {
+            const fid = el.dataset.fid;
+            _facPaintAvatar(el, fid, (_facultyById(fid) || {}).name || '');
+            if (typeof _facTypeCache !== 'undefined' && !_facTypeCache[fid]) {
+                fetch(`/api/manual/faculty_info?emp_num=${encodeURIComponent(fid)}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d || !d.success) return;
+                        _facTypeCache[fid] = d;
+                        const t = box.querySelector(`[data-type-fid="${CSS.escape(fid)}"]`);
+                        if (t) t.textContent = _sharedFacTypeLabel(fid);
+                    }).catch(() => {});
+            }
+        });
+    } catch (e) { /* the panel is a helper view; never block the editor */ }
+}
+function addSharedFaculty(fid) {
+    if (!fid) return;
+    const lim = _sharedSubjectLimit(_currentSubjectCode);
+    if (_sharedFacultyIds().length >= lim) {
+        showValidationModal('Too Many Faculty',
+            `${_currentSubjectCode} can be shared by up to ${lim} faculty per section (Settings → Shared Subjects).`);
+        _renderSharedFacPanel();
+        return;
+    }
+    const k = _sharedKey();
+    (_sharedCoFaculty[k] = _sharedCoFaculty[k] || []).push(String(fid));
+    _refreshSliceFacultySelects();
+    _renderSharedFacPanel();
+}
+function removeSharedFaculty(fid) {
+    const teaching = _sliceFacSelects().filter(s => s.value === String(fid)).length;
+    if (teaching) {
+        const nm = (_facultyById(fid) || {}).name || fid;
+        showValidationModal('Faculty Still Has Slices',
+            `${nm} still teaches ${teaching} slice${teaching > 1 ? 's' : ''} of ${_currentSubjectCode}. ` +
+            'Set those slices to another faculty first.');
+        return;
+    }
+    const k = _sharedKey();
+    _sharedCoFaculty[k] = (_sharedCoFaculty[k] || []).filter(x => x !== String(fid));
+    _refreshSliceFacultySelects();
+    _renderSharedFacPanel();
+}
+// Distinct faculty across the open subject's slices (incl. the subject's own faculty).
+function _sliceFacultySet() {
+    const out = new Set();
+    document.querySelectorAll('.ts-row').forEach(r => {
+        const id = _sliceFacultyId(r);
+        if (id && id.toUpperCase() !== 'TBA') out.add(id);
+    });
+    return out;
+}
+function onTsFacultyChange(id) {
+    const row = document.getElementById(`ts-row-${id}`);
+    const sel = document.getElementById(`ts-fac-${id}`);
+    if (!row || !sel) return;
+    const lim = _sharedSubjectLimit(_currentSubjectCode);
+    if (lim && _sliceFacultySet().size > lim) {
+        showValidationModal('Too Many Faculty',
+            `${_currentSubjectCode} can be shared by up to ${lim} faculty per section (Settings → Shared Subjects). ` +
+            'Choose one of the faculty already teaching its other slices.');
+        sel.value = sel.dataset.prev || '';
+        return;
+    }
+    sel.dataset.prev = sel.value;
+    _markSliceDirty(id);
+    _syncSliceToPending(id);
+    _renumberSlices();
+    _refreshSlicePills();
+}
+// Save-time "did this slice change": always true for an ordinary subject (its faculty is
+// the subject's); for a shared subject, the entry's faculty must match the slice's pick.
+function _sliceFacultyUnchanged(entry, row) {
+    if (!_sharedSubjectLimit(_currentSubjectCode)) return true;
+    return String((entry && entry.faculty_id) || '') === String(_sliceFacultyId(row) || '');
+}
+// Before a save: a shared subject's slices may not use more faculty than its limit.
+async function _checkSharedFacultyLimit() {
+    const lim = _sharedSubjectLimit(_currentSubjectCode);
+    if (!lim) return true;
+    const n = _sliceFacultySet().size;
+    if (n <= lim) return true;
+    await showValidationModal('Too Many Faculty',
+        `${_currentSubjectCode} has ${n} faculty across its slices, but it can be shared by up to ${lim} ` +
+        'per section (Settings → Shared Subjects). Set the extra slices to one of the other faculty.');
+    return false;
+}
+
 window.SHARED_ROOM_FLEX = (() => {
     try { return JSON.parse(document.getElementById('app-init-data')?.dataset.sharedFlex || '[]'); }
     catch (e) { return []; }
@@ -5035,6 +5327,8 @@ function _setFacultyLock(facId, facName) {
         }
     }
     _updateAssignFacultyBtn();
+    _refreshSliceFacultySelects();
+    _renderSharedFacPanel();
 }
 function _clearFacultyLock() {
     _lockedFacultyId   = null;
@@ -5052,6 +5346,7 @@ function _clearFacultyLock() {
     if (trigger) { trigger.style.pointerEvents = ''; trigger.style.opacity = ''; }
     window._pendingFacultyAssignment = false;
     _updateAssignFacultyBtn();
+    _renderSharedFacPanel();
 }
 
 /* ── Reset right panel to empty / no-subject state ─────────── */
@@ -5062,9 +5357,9 @@ function _resetRightPanel() {
     document.getElementById('right-subj-code').textContent = '--';
     document.getElementById('right-subj-name').textContent = 'Select a subject from the curriculum guide';
     const badge = document.getElementById('right-subj-badge');
-    if (badge) badge.textContent = '-';
+    if (badge) { badge.textContent = '-'; badge.className = 'right-subj-badge'; }
     const unitVal = document.getElementById('unit-progress-val');
-    if (unitVal) unitVal.textContent = '-';
+    if (unitVal) { unitVal.textContent = '-'; unitVal.className = 'unit-progress-val'; }
     document.getElementById('time-slots-container').innerHTML = '';
     _activeSliceId = null;
     _dirtySliceIds.clear();
@@ -5173,7 +5468,7 @@ function _updateAssignFacultyBtn() {
         btn.style.display = 'block';
         btn.dataset.action = 'reassign-locked';
         btn.classList.add('reassign');
-        btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
+        btn.innerHTML = '<i class="fas fa-user-pen"></i> Reassign Faculty';
         btn.title = 'This subject already has a schedule with this faculty. Click to change the faculty (you will be asked to confirm).';
         return;
     }
@@ -5199,7 +5494,7 @@ function _updateAssignFacultyBtn() {
         btn.style.display  = 'block';
         btn.dataset.action = 'reassign-soft';
         btn.classList.add('reassign');
-        btn.innerHTML = '<i class="fas fa-lock"></i> Reassign Faculty';
+        btn.innerHTML = '<i class="fas fa-user-pen"></i> Reassign Faculty';
         btn.title = 'This faculty is assigned to the subject. Click to pick a different faculty.';
         if (facWrapper) facWrapper.style.display = 'none';
         return;
@@ -5256,9 +5551,18 @@ function _syncSubjectFacultyToCalendar(code, facId, facName) {
     const sem  = document.getElementById('sel_sem').value;
     const sect = document.getElementById('sel_section')?.value || '';
     let touched = false;
+    // Shared subject: slices set to their own faculty keep it — only the slices that follow
+    // the subject's faculty move to the new one.
+    const _ownFac = new Set();
+    if (_sharedSubjectLimit(code)) {
+        document.querySelectorAll('#time-slots-container .ts-fac-sel').forEach(sel => {
+            if (sel.value) _ownFac.add(String(sel.value));
+        });
+    }
     pendingManualSchedule.forEach(c => {
         if (c.subject_code !== code || c.ay !== ay || c.sem !== sem) return;
         if (sect && c.section_id && String(c.section_id) !== String(sect)) return;
+        if (_ownFac.has(String(c.faculty_id || ''))) return;
         c.faculty_id = facId;
         c.instructor = facName;
         touched = true;
@@ -5841,6 +6145,7 @@ function _updateMakeupClassBtn(empNum) {
 
 async function _updateFacultyUnitDisplay(empNum) {
     _updateMakeupClassBtn(empNum);
+    if (typeof _renderSharedFacPanel === 'function') setTimeout(_renderSharedFacPanel, 0);
     const _myFacUnitToken = ++_facUnitDisplayToken;
     const statsPanel = document.getElementById('fac-stats-panel');
     const alertEl    = document.getElementById('facultyAlert');
@@ -6941,6 +7246,8 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
     // Compute slice status label for EXISTING rows
     const _sliceStatusHtml = existingJson ? _sliceStatusHtmlFor(existingJson) : '';
 
+    const _sliceFacId = _sliceOwnFacultyFromJson(existingJson);
+
     div.innerHTML = `
         <div class="ts-card-hdr">
             <div class="ts-row-num"><span>SLICE ${num}</span>${_sliceStatusHtml}</div>
@@ -7009,7 +7316,9 @@ function addNewTimeSlot(dayVal='', startVal='', endVal='', roomId='', existingJs
                     <div class="ts-ss-list" id="tsr-list-${id}">${roomItems}</div>
                 </div>
             </div>
-        </div>`;
+        </div>${_sliceFacultyFieldHtml(id, _sliceFacId)}`;
+    const _facSelEl = div.querySelector('.ts-fac-sel');
+    if (_facSelEl) _facSelEl.dataset.prev = _facSelEl.value;
     if (existingJson) div.insertAdjacentHTML('beforeend', _officialRefHtml(existingJson));
     document.getElementById('time-slots-container').appendChild(div);
     _refreshSliceEditingTag(div);   // reopened with edits still unsaved
@@ -7105,6 +7414,9 @@ function duplicateTimeSlot(id) {
         // Tag the new row with the origin values so save/drop can detect it is still unmodified.
         const newRow = document.getElementById(`ts-row-${newId}`);
         if (newRow) newRow.dataset.dupOrigin = [day, start, end, roomId].join('|');
+        // Shared subject: the copy keeps the original slice's faculty.
+        const _srcFac = row.querySelector('.ts-fac-sel'), _dstFac = newRow?.querySelector('.ts-fac-sel');
+        if (_srcFac && _dstFac) { _dstFac.value = _srcFac.value; _dstFac.dataset.prev = _dstFac.value; _renumberSlices(); }
         // The Day filter already ran while the row was being built (before it was tagged as
         // a duplicate) and dropped the copied day. Put it back now that the tag is set.
         const _dupSel = newRow?.querySelector('.ts-day-sel');
@@ -7217,11 +7529,6 @@ async function removeTimeSlot(id) {
         );
         if (!ok1) return;
 
-        const ok2 = await showConfirmModal(
-            'Are you sure you want to delete this schedule? This action cannot be undone.',
-            'Final Confirmation'
-        );
-        if (!ok2) return;
 
         const versionid = sess.versionid || null;
         // A slice without its database ids (carried over from Schedule Generation, or
@@ -7300,11 +7607,6 @@ async function removeTimeSlot(id) {
         );
         if (!ok1) return;
 
-        const ok2 = await showConfirmModal(
-            'Are you sure you want to delete this schedule? This action cannot be undone.',
-            'Final Confirmation'
-        );
-        if (!ok2) return;
 
         // This slice was never saved to DB, so the removal is a pure local mutation — safe to undo.
         if (typeof _pushHistorySnapshot === 'function') _pushHistorySnapshot();
@@ -7457,8 +7759,9 @@ function _renumberSlices() {
         const numEl = row.querySelector('.ts-row-num');
         if (!numEl) return;
         const label = `SLICE ${idx + 1}`;
-        numEl.innerHTML = `<span>${label}</span>${_sliceStatusHtmlFor(row.dataset.existingJson)}`;
+        numEl.innerHTML = `<span>${label}</span>` + _sliceStatusHtmlFor(row.dataset.existingJson);
     });
+    _renderSharedFacPanel();
 }
 
 function onTsDayChange(id) {
@@ -7566,6 +7869,16 @@ function _syncSliceToPending(id) {
         entry.time       = (newStart && newEnd) ? `${newStart} - ${newEnd}` : '';
         entry.room_id    = newRoomId;
         entry.room       = newRoomNm;
+        if (typeof _sharedSubjectLimit === 'function' && _sharedSubjectLimit(_currentSubjectCode)) {
+            // Shared subject: the calendar pill follows the slice's faculty right away.
+            const _sf = _sliceFacultyFor(row);
+            const _fid = _sf ? _sf.id : _mainFacultyId();
+            if (_fid) {
+                entry.faculty_id = _fid;
+                entry.instructor = _sf ? _sf.name
+                    : ((_facultyById(_fid) || {}).name || document.getElementById('fac_display_name')?.value || entry.instructor);
+            }
+        }
         _refreshSliceEditingTag(row);
 
         const gridRoom = newRoomId || oldRoomId;
@@ -7591,8 +7904,9 @@ function _syncSliceToPending(id) {
         if (code && newDay && newStart && newEnd) {
             const prog   = document.getElementById('sel_prog')?.value  || '';
             const yl     = document.getElementById('sel_year')?.value  || '';
-            const facId  = document.getElementById('sel_faculty')?.value || '';
-            const facNm  = document.getElementById('fac_display_name')?.value || '';
+            const _sf    = typeof _sliceFacultyFor === 'function' ? _sliceFacultyFor(row) : null;   // shared subject: the slice's own faculty
+            const facId  = _sf ? _sf.id   : (document.getElementById('sel_faculty')?.value || '');
+            const facNm  = _sf ? _sf.name : (document.getElementById('fac_display_name')?.value || '');
             const meta   = (typeof _subjectMeta !== 'undefined' && _subjectMeta[code]) || {};
             const preview = {
                 temp_id:      previewId,
@@ -7725,8 +8039,12 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
     // already ran, but this call keeps going in the background for the OLD subject and can
     // still write its faculty/time-slots onto whatever subject is now showing. _loadSubjCode
     // (declared at the top) is checked before each risky write below.
-    const empNumFromSess = firstSess.employeenumber || firstSess.faculty_id || '';
-    const facStr = (firstSess.instructor || '').split(',')[0].trim();
+    // Shared subject: lock the subject's own (main) faculty, not whoever teaches slice 1.
+    const _sharedLoad = !!_sharedSubjectLimit(_loadSubjCode);
+    const empNumFromSess = (_sharedLoad && firstSess.main_employeenumber)
+        || firstSess.employeenumber || firstSess.faculty_id || '';
+    const facStr = (_sharedLoad && firstSess.main_employeenumber) ? ''
+        : (firstSess.instructor || '').split(',')[0].trim();
     // Name fallback only with a real name: ''.includes('') is true for EVERY faculty, which
     // used to silently pre-fill the first faculty in the list for an unknown/empty instructor.
     const _byName = facStr
@@ -7815,8 +8133,9 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
             subject_code: sess.subjectcode,
             subject_name: sess.subjectname || sess.subjectcode,
             // Prefer matched faculty ID; fall back to the raw API value so _insert_batch never skips
-            faculty_id:   fac ? String(fac.id) : String(sess.faculty_id || ''),
-            instructor:   firstSess.instructor || '',
+            faculty_id:   (_sharedLoad && sess.employeenumber) ? String(sess.employeenumber)
+                        : (fac ? String(fac.id) : String(sess.faculty_id || '')),
+            instructor:   (_sharedLoad && sess.employeenumber) ? (sess.instructor || '') : (firstSess.instructor || ''),
             room_id:      roomId,
             room:         roomName,
             day:          sess.daydesc,
@@ -7842,7 +8161,11 @@ window._loadExistingSessionsIntoSlices = async function(sessions, loadToken) {
             status:       sess.status || 'Draft',
             // As loaded, so a Local save can send only the occurrences actually changed.
             // versionid is set only on Official rows (Local rows come back with NULL).
-            _loaded:      { day: sess.daydesc, start_time: st, end_time: et, room_id: String(roomId) }
+            _loaded:      Object.assign({ day: sess.daydesc, start_time: st, end_time: et, room_id: String(roomId) },
+                              // Shared subject: the slice's faculty as loaded, so moving the slice to
+                              // another faculty counts as an edit (Approve, _isPendingEdited).
+                              _sharedLoad ? { faculty_id: (_sharedLoad && sess.employeenumber) ? String(sess.employeenumber)
+                                                          : (fac ? String(fac.id) : String(sess.faculty_id || '')) } : {})
         };
         pendingManualSchedule.push(newClass);
 
@@ -8693,7 +9016,7 @@ window._triggerSaveDraft = async function _triggerSaveDraft() {
             });
 
             // A faculty reassignment explains itself once, after the status is settled below.
-            if (!_reassign) await showValidationModal('Saved as Draft', `${savedMsg}${deletedNote}`);
+            if (!_reassign) await _notifyDone('Saved as Draft', `${savedMsg}${deletedNote}`);
             await _restReady;
             setTimeout(() => window.isLeavingIntentionally = false, 100);
 
@@ -8782,6 +9105,7 @@ async function confirmAllSlots(opts = {}) {
     // HC16 group model, fail-closed: no saving while the open subject's Merge Group details
     // are unavailable or still loading (never applies under the legacy model).
     if (typeof _mgGuardSave === 'function' && await _mgGuardSave('save')) return;
+    if (!(await _checkSharedFacultyLimit())) return;
     if (window._pendingFacultyAssignment && !auto) {
         const ok = await showConfirmModal(
             'The selected faculty has not been confirmed yet. Saving this schedule will automatically confirm and assign the selected faculty to this subject.',
@@ -8992,7 +9316,8 @@ async function confirmAllSlots(opts = {}) {
                     existingEntry.day        === day &&
                     existingEntry.start_time === start &&
                     existingEntry.end_time   === end &&
-                    String(existingEntry.room_id) === String(roomId);
+                    String(existingEntry.room_id) === String(roomId) &&
+                    _sliceFacultyUnchanged(existingEntry, row);
                 if (unchanged) {
                     _dirtySliceIds.delete(rowId); row.dataset.dirty = '';
                     continue;
@@ -9039,7 +9364,8 @@ async function confirmAllSlots(opts = {}) {
 
         const prevLen = pendingManualSchedule.length;
         window._mgPlacingEventKey = row.dataset.mergeEvent || '';
-        try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; }
+        window._sliceFacultyOverride = _sliceFacultyFor(row);
+        try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; window._sliceFacultyOverride = null; }
         // BUG (fixed): this used to also require `!window.currentEditSession` here, which
         // meant a conflict on an EXISTING slice (hasExisting branch above always sets
         // window.currentEditSession = sessData before calling confirmAndPlace) never
@@ -9099,6 +9425,7 @@ async function saveIndividualSlice(id) {
     // HC16 group model, fail-closed: no slice save while the open subject's Merge Group details
     // are unavailable or still loading (never applies under the legacy model).
     if (typeof _mgGuardSave === 'function' && await _mgGuardSave('save this slice')) return;
+    if (!(await _checkSharedFacultyLimit())) return;
 
     const day    = row.querySelector('.ts-day-sel')?.value      || '';
     const start  = row.querySelector('.ts-start-hidden')?.value || '';
@@ -9162,7 +9489,8 @@ async function saveIndividualSlice(id) {
                 existingEntry.day        === day &&
                 existingEntry.start_time === start &&
                 existingEntry.end_time   === end &&
-                String(existingEntry.room_id) === String(roomId);
+                String(existingEntry.room_id) === String(roomId) &&
+                _sliceFacultyUnchanged(existingEntry, row);
             if (unchanged) {
                 // Restore and show no-change modal
                 document.getElementById('sel_day').value = _origDay;
@@ -9187,7 +9515,8 @@ async function saveIndividualSlice(id) {
     pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== 'PREVIEW_' + id);
     const prevLen = pendingManualSchedule.length;
     window._mgPlacingEventKey = row.dataset.mergeEvent || '';
-    try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; }
+    window._sliceFacultyOverride = _sliceFacultyFor(row);
+    try { await confirmAndPlace(); } finally { window._mgPlacingEventKey = ''; window._sliceFacultyOverride = null; }
     const placed = pendingManualSchedule.length > prevLen ||
                    (hasExisting && window.currentEditSession === null);
 
@@ -12548,7 +12877,7 @@ async function _publishLocalArrangementRequest(arrId, reason) {
     }
 
     _rememberLocalUpdatedAt(arrId, result.data.updated_at);
-    await showValidationModal('Published', 'Local arrangement published successfully.');
+    await (typeof _notifyDone === 'function' ? _notifyDone : showValidationModal)('Schedule Published', 'Local arrangement published.');
     try {
         if (typeof _loadVersionHistoryPanel === 'function') _loadVersionHistoryPanel();
         if (typeof refreshScheduleGrid === 'function') await refreshScheduleGrid();
@@ -13125,19 +13454,12 @@ async function restoreVersion(versionId, btn) {
             `If you publish the restored Draft, the ones whose schedule it changes will be removed.`;
     } catch (e) { /* informational — Publish still confirms it */ }
 
-    // Step 1 — first confirmation
+    // One confirmation
     const step1 = await showConfirmModal(
         `You are about to restore Revision ${_rLabel} as a new Draft.\n\nIt replaces this section's current Draft. The Published schedule stays live until you publish the restored Draft.${_localLine}`,
         `Restore Revision ${_rLabel}`
     );
     if (!step1) return;
-
-    // Step 2 — final confirmation
-    const step2 = await showConfirmModal(
-        `Are you sure you want to restore Revision ${_rLabel} as the new Draft?`,
-        'Final Confirmation'
-    );
-    if (!step2) return;
 
     // Every revision restores as a new Draft. Only Publish may replace the live Published
     // schedule (with its validation, conflict checks and Local Scheduler sync).
@@ -13891,81 +14213,34 @@ window.triggerCascade = async function(skipGridRender) {
     }, true);
 })();
 </script>
-{% endblock %}
-
-
-<div id="localOfficialRequirementBanner" class="alert alert-warning d-none" role="alert" style="margin: 0 0 1rem 0;">
-    <strong>Published Official Schedule required.</strong>
-    <span id="localOfficialRequirementMessage">
-        Local Scheduler can only rearrange subjects from the Published Official Schedule of the selected section.
-    </span>
-</div>
-
-<script id="phase2LocalOfficialFacultyLock">
-document.addEventListener('DOMContentLoaded', function () {
-    const params = new URLSearchParams(window.location.search);
-    if ((params.get('scheduler') || '').toLowerCase() !== 'local') return;
-
-    const faculty = document.getElementById('faculty');
-    const badge = document.getElementById('facultySourceBadge');
-    const section = document.getElementById('section');
-    const subject = document.getElementById('subject');
-    const banner = document.getElementById('localOfficialRequirementBanner');
-    const bannerMsg = document.getElementById('localOfficialRequirementMessage');
-
-    if (faculty) {
-        faculty.disabled = true;
-        faculty.setAttribute('aria-disabled', 'true');
-        faculty.title = 'Faculty is inherited from the Published Official Schedule.';
+<script id="editorFitViewport">
+/* Desktop: the editor (calendar + Add Schedule panel) ends at the bottom of the window, so
+   SAVE AS DRAFT / APPROVE SCHEDULE are always on screen. The CSS height
+   (calc(100vh - 148px)) assumed the editor starts 148px down, but it starts lower (page
+   title bar), so its bottom ~60px — those buttons included — sat below the fold.
+   Measured from the editor's real top, at scroll position 0 of every scrolling parent. */
+(function () {
+    const MIN_H = 560, GAP = 12;
+    function fit() {
+        const w = document.querySelector('.editor-wrapper');
+        if (!w) return;
+        if (window.innerWidth <= 1024) { w.style.height = ''; return; }   // responsive.css layout
+        let top = w.getBoundingClientRect().top;
+        for (let p = w.parentElement; p; p = p.parentElement) top += p.scrollTop || 0;
+        top += window.scrollY || 0;
+        w.style.height = Math.max(MIN_H, Math.round(window.innerHeight - top - GAP)) + 'px';
     }
-    if (badge) badge.textContent = 'OFFICIAL · LOCKED';
-
-    // Place the requirement notice near the scheduling controls when possible.
-    if (banner) {
-        const target = section?.closest('.card, .panel, .manual-editor, .schedule-editor');
-        if (target && target.parentNode) target.parentNode.insertBefore(banner, target);
-    }
-
-    function setLocalOfficialState(message) {
-        if (!banner || !bannerMsg) return;
-        if (message) {
-            bannerMsg.textContent = message;
-            banner.classList.remove('d-none');
-        } else {
-            banner.classList.add('d-none');
-        }
-    }
-
-    function refreshLocalPrerequisiteHint() {
-        if (!section || !section.value) {
-            setLocalOfficialState('Select a section first. Local Scheduler requires that section to have a Published Official Schedule.');
-            return;
-        }
-        // Once a section is selected, the existing subject/session loaders and
-        // backend decide whether a Published Official source exists. Avoid
-        // guessing from an empty dropdown while asynchronous loading is active.
-        setLocalOfficialState('');
-    }
-
-    section?.addEventListener('change', refreshLocalPrerequisiteHint);
-    refreshLocalPrerequisiteHint();
-
-    // Expose a tiny helper for existing AJAX error handlers or later phases.
-    window.setLocalOfficialRequirement = setLocalOfficialState;
-});
+    let t = null;
+    const later = () => { clearTimeout(t); t = setTimeout(fit, 80); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit);
+    else fit();
+    window.addEventListener('load', fit);
+    window.addEventListener('resize', later);
+})();
 </script>
-
-<script>
-function showLocalOfficialRequirementFromError(message) {
-    const text = String(message || '');
-    if (window.setLocalOfficialRequirement &&
-        /Published Official Schedule|not part of the Published Official Schedule|Official schedule has no assigned faculty/i.test(text)) {
-        window.setLocalOfficialRequirement(text);
-    }
-}
-</script>
-
-
+<!-- Local Scheduler conflict presenters (Save: _presentLocalEffectiveConflicts, Publish:
+     _presentLocalPublishConflicts). They used to sit after the last endblock tag, which
+     Jinja never renders, so a rejected Local save/publish threw "not defined". -->
 <script id="phase4LocalConflictPresentation">
 function _presentLocalEffectiveConflicts(conflicts) {
     const items = Array.isArray(conflicts) ? conflicts : [];
@@ -14016,7 +14291,6 @@ function _presentLocalEffectiveConflicts(conflicts) {
 }
 </script>
 
-
 <script id="phase4LocalPublishConflictPresentation">
 function _presentLocalPublishConflicts(conflicts, errorMessage) {
     const items = Array.isArray(conflicts) ? conflicts : [];
@@ -14041,3 +14315,4 @@ function _presentLocalPublishConflicts(conflicts, errorMessage) {
     }
 }
 </script>
+{% endblock %}

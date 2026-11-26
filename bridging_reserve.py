@@ -45,7 +45,7 @@ def reserved_sessions(section_id, semestertype, ay_id):
         SELECT cs.subjectcode,
                cs.subjectname,
                COALESCE(f.lastname || ', ' || f.firstname, 'TBA') AS instructor,
-               sc.employeenumber                                  AS faculty_id,
+               COALESCE(ss.employeenumber, sc.employeenumber)                                  AS faculty_id,
                COALESCE(r.roomname, 'TBA')                        AS roomname,
                ss.daydesc,
                ss.starttimeid,
@@ -65,7 +65,7 @@ def reserved_sessions(section_id, semestertype, ay_id):
         JOIN schedule_version sv    ON sv.scheduleid          = sc.scheduleid
         JOIN schedule_sessions ss   ON ss.versionid           = sv.versionid
         JOIN curriculumsubject cs   ON cs.curriculumsubjectid = sc.curriculumsubjectid
-        LEFT JOIN faculty f         ON f.employeenumber       = sc.employeenumber
+        LEFT JOIN faculty f         ON f.employeenumber       = COALESCE(ss.employeenumber, sc.employeenumber)
         LEFT JOIN room r            ON r.roomid               = ss.roomid
         LEFT JOIN timeslot ts_s     ON ts_s.timeid            = ss.starttimeid
         LEFT JOIN timeslot ts_e     ON ts_e.timeid            = ss.endtimeid

@@ -2690,6 +2690,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMergeGroups();
   loadMergeLoadPolicies();
   loadSharedRooms();
+  loadSharedSubjects();
   initProgramPanel();
 
   /* Wire AJAX submit for Edit Section rename form */
@@ -2827,6 +2828,139 @@ function srDelete(roomid) {
       if (!data.success) { _showToast('error', data.error || 'Could not remove.'); return; }
       _showToast('success', 'Shared room removed.');
       await loadSharedRooms();
+    } catch { _showToast('error', 'Network error — could not remove.'); }
+  });
+}
+
+
+
+/* ── Shared Subjects (Merging & Calendar): subjects split between several faculty, a faculty per slice ── */
+let _SS = { policies: [], subjects: [] };
+
+async function loadSharedSubjects() {
+  const body = document.getElementById('ssBody');
+  if (!body) return;
+  try {
+    const res = await fetch('/admin/settings/shared_subjects');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Could not load shared subjects.');
+    _SS = { policies: data.policies || [], subjects: data.subjects || [] };
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="mlp-empty">${_srEsc(e.message)}</td></tr>`;
+    return;
+  }
+  body.innerHTML = _SS.policies.length ? _SS.policies.map((p, i) => `
+    <tr>
+      <td>${(p.programs || []).length
+             ? p.programs.map(c => `<span class="ss-prog-tag">${_srEsc(c)}</span>`).join('')
+             : '—'}</td>
+      <td><b>${_srEsc(p.subjectcode)}</b></td>
+      <td>${_srEsc(p.subjectname || '—')}</td>
+      <td><span class="sr-limit"><input type="number" class="sr-num" min="2" max="10" step="1" value="${p.max_faculty}"
+                 aria-label="Faculty per section for ${_srEsc(p.subjectcode)}"
+                 onchange="ssUpdate(${i}, this)"> faculty</span></td>
+      <td class="sr-act"><button title="Back to one faculty per section" onclick="ssDelete(${i})"><i class="fas fa-trash"></i></button></td>
+    </tr>`).join('')
+    : '<tr><td colspan="5" class="mlp-empty">No shared subjects yet — every subject has one faculty per section.</td></tr>';
+}
+
+// Subjects not yet shared, grouped by program (page order = program code), like the
+// Manual Editor's rooms grouped by building. A subject in two programs is under both.
+function _ssGroups() {
+  const used = new Set(_SS.policies.map(p => p.subjectcode));
+  const groups = new Map();                       // programcode -> {name, subjects}
+  _SS.subjects.forEach(s => {
+    if (used.has(s.subjectcode)) return;
+    const k = s.programcode || 'OTHER';
+    if (!groups.has(k)) groups.set(k, { name: s.programname || '', subjects: [] });
+    groups.get(k).subjects.push(s);
+  });
+  return groups;
+}
+
+function ssFillSubjects() {
+  const prog = document.getElementById('ssProgram').value;
+  const sel = document.getElementById('ssSubject');
+  const prev = sel.value;
+  const groups = _ssGroups();
+  let html = '<option value="">— Select subject —</option>';
+  groups.forEach((g, code) => {
+    if (prog && prog !== code) return;
+    html += `<optgroup label="${_srEsc(code)}${g.name ? ' — ' + _srEsc(g.name) : ''}">` +
+      g.subjects.map(s => `<option value="${_srEsc(s.subjectcode)}">${_srEsc(s.subjectcode)}${s.subjectname ? ' · ' + _srEsc(s.subjectname) : ''}</option>`).join('') +
+      '</optgroup>';
+  });
+  sel.innerHTML = html;
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function ssOpenAdd() {
+  const groups = _ssGroups();
+  const progSel = document.getElementById('ssProgram');
+  progSel.innerHTML = '<option value="">All programs</option>' + [...groups.entries()]
+    .map(([code, g]) => `<option value="${_srEsc(code)}" title="${_srEsc(g.name)}">${_srEsc(code)}</option>`)
+    .join('');
+  ssFillSubjects();
+  document.getElementById('ssMax').value = 2;
+  document.getElementById('ssAddRow').hidden = false;
+  progSel.focus();
+}
+function ssCloseAdd() { document.getElementById('ssAddRow').hidden = true; }
+
+async function _ssPost(subjectcode, max) {
+  const res = await fetch('/admin/settings/shared_subjects', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subjectcode, max_faculty: max }),
+  });
+  return res.json();
+}
+
+async function ssSave() {
+  const code = document.getElementById('ssSubject').value;
+  const max = parseInt(document.getElementById('ssMax').value, 10);
+  if (!code) { _showToast('error', 'Choose a subject first.'); return; }
+  if (!(max >= 2 && max <= 10)) { _showToast('error', 'Faculty per section must be from 2 to 10.'); return; }
+  try {
+    const data = await _ssPost(code, max);
+    if (!data.success) { _showToast('error', data.error || 'Could not save.'); return; }
+    _showToast('success', 'Shared subject saved.');
+    ssCloseAdd();
+    await loadSharedSubjects();
+  } catch { _showToast('error', 'Network error — could not save.'); }
+}
+
+async function ssUpdate(i, input) {
+  const p = _SS.policies[i];
+  const max = parseInt(input.value, 10);
+  if (!p) return;
+  if (!(max >= 2 && max <= 10)) {
+    _showToast('error', 'Faculty per section must be from 2 to 10.');
+    input.value = p.max_faculty;
+    return;
+  }
+  try {
+    const data = await _ssPost(p.subjectcode, max);
+    if (!data.success) { _showToast('error', data.error || 'Could not save.'); input.value = p.max_faculty; return; }
+    _showToast('success', 'Shared subject updated.');
+    await loadSharedSubjects();
+  } catch { _showToast('error', 'Network error — could not save.'); }
+}
+
+function ssDelete(i) {
+  const p = _SS.policies[i];
+  if (!p) return;
+  _confirmAction({
+    title: 'REMOVE SHARED SUBJECT', sub: p.subjectcode,
+    body: 'This subject goes back to one faculty per section. Schedules already saved keep their slice faculty ' +
+          'until the subject is edited and saved again in the Manual Editor.',
+    confirmLabel: 'Remove',
+  }, async () => {
+    try {
+      const res = await fetch(`/admin/settings/shared_subjects/${encodeURIComponent(p.subjectcode)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) { _showToast('error', data.error || 'Could not remove.'); return; }
+      _showToast('success', 'Shared subject removed.');
+      await loadSharedSubjects();
     } catch { _showToast('error', 'Network error — could not remove.'); }
   });
 }

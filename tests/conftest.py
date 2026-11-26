@@ -127,3 +127,11 @@ def _no_shared_rooms_by_default(monkeypatch):
     same whatever is configured there; a test of shared rooms patches its own limits."""
     import shared_rooms
     monkeypatch.setattr(shared_rooms, 'limits', lambda: {})
+
+
+@pytest.fixture(autouse=True)
+def _no_shared_subjects_by_default(monkeypatch):
+    """Same for Settings > Shared Subjects: every test starts with none configured
+    (pages and the editor read shared_subjects.limits()); a test of them sets its own."""
+    import shared_subjects
+    monkeypatch.setattr(shared_subjects, 'limits', lambda: {})

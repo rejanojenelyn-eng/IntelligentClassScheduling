@@ -15,7 +15,8 @@ def test_local_check_queries_the_faculty_official_drafts():
     body = _local_check()
     assert "'Official Draft' AS source" in body
     assert "sv.status='Draft' AND sv.source IS DISTINCT FROM 'local'" in body
-    assert "COALESCE(sv.employeenumber, s.employeenumber)=%s" in body
+    # The slice's own faculty first (Settings > Shared Subjects), then the Draft's faculty.
+    assert "COALESCE(ss.employeenumber, sv.employeenumber, s.employeenumber)=%s" in body
 
 
 def test_own_subject_draft_in_this_section_is_not_a_conflict():

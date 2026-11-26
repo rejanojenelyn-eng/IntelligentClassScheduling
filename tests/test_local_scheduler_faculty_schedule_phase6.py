@@ -69,6 +69,8 @@ def test_faculty_dashboard_today_adds_active_published_local():
 def test_faculty_dashboard_load_metrics_remain_official_based():
     b=block("faculty_dashboard","faculty_schedule")
     assert "teaching-load totals below" in b
-    assert "SELECT COALESCE(SUM(cs.creditunits), 0) as total_units" in b
+    # Shared subjects: each faculty's share of the units (shared_subjects.unit_share_sql).
+    assert "SELECT COALESCE(SUM(cs.creditunits * " in b and "as total_units" in b
+    assert "_shared_subjects.teaches_version_sql('sv', 'sc', 'me.emp')" in b
     assert "COUNT(DISTINCT cs.subjectcode) as total_subjects" in b
     assert "sv.status = 'Published'" in b

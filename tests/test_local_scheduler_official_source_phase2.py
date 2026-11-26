@@ -68,11 +68,15 @@ def test_local_save_persists_official_faculty_not_client_faculty():
 
 
 def test_local_ui_locks_faculty_field():
+    # Local mode shows the Official faculty read-only (_applyLocalFacultyReadonly): no
+    # search, no Assign/Reassign. (An older script for #faculty sat after the last
+    # {% endblock %}, was never rendered, and was removed.)
     html = _read("templates/academic/manualScheduleEditor.html")
-    assert "phase2LocalOfficialFacultyLock" in html
-    assert "faculty.disabled = true" in html
-    assert "OFFICIAL · LOCKED" in html
-    assert "Faculty is inherited from the Published Official Schedule." in html
+    s = html.index("function _applyLocalFacultyReadonly()")
+    body = html[s:html.index("\nfunction ", s + 10)]
+    assert "Official Faculty (Read-Only)" in body
+    assert "facWrapper.style.display = 'none'" in body
+    assert "btnAssign.style.display  = 'none'" in body
 
 
 def test_local_ui_requires_section_and_official_subject_before_save():
@@ -83,9 +87,19 @@ def test_local_ui_requires_section_and_official_subject_before_save():
 
 def test_local_ui_explains_published_official_requirement():
     html = _read("templates/academic/manualScheduleEditor.html")
-    assert "localOfficialRequirementBanner" in html
-    assert "Published Official Schedule required." in html
-    assert "Local Scheduler can only rearrange subjects from the Published Official Schedule" in html
+    assert 'id="localNoPubBlock"' in html
+    assert "No Published Official Schedule" in html
+    assert "New Local Arrangements can only be created from an existing Published Schedule." in html
+
+
+def test_local_conflict_presenters_are_rendered_inside_the_block():
+    # Jinja renders a child template only inside its blocks: the presenters used by a
+    # rejected Local save / publish must come before the last {% endblock %}.
+    html = _read("templates/academic/manualScheduleEditor.html")
+    end = html.rindex("{% endblock %}")
+    for fn in ("function _presentLocalEffectiveConflicts(", "function _presentLocalPublishConflicts("):
+        assert html.index(fn) < end, fn
+    assert not html[end + len("{% endblock %}"):].strip()
 
 
 def test_phase1_section_contract_is_still_present():

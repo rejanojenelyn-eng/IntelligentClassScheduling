@@ -534,6 +534,27 @@
                 <tbody id="srBody"><tr><td colspan="4" class="mlp-empty">Loading…</td></tr></tbody>
               </table>
             </div>
+
+            <div class="cparam-divider"></div>
+            <div class="pair-list-head">
+              <span class="param-sublabel"><i class="fas fa-user-friends param-sublabel-icon"></i>SHARED SUBJECTS</span>
+              <button class="btn-add-item" onclick="ssOpenAdd()"><i class="fas fa-plus"></i> ADD SHARED SUBJECT</button>
+            </div>
+            <p class="card-desc" style="margin:2px 0 8px;">A shared subject can be split between <b>several faculty</b> in one section, up to the number set here. In the Manual Editor each <b>slice</b> (one day, time and room) gets its own faculty &mdash; e.g. the lecture slices to one faculty and the laboratory slice to another &mdash; and the calendar shows it as <b>SLICE 1 &middot; LASTNAME</b>. Each faculty is checked for conflicts and credited only the hours of their own slices; the subject's units are split by the same share of hours. Other subjects keep one faculty per section.</p>
+            <div class="sr-add" id="ssAddRow" hidden>
+              <select id="ssProgram" class="mlp-input ss-prog" aria-label="Program" onchange="ssFillSubjects()"></select>
+              <select id="ssSubject" class="mlp-input" aria-label="Subject"></select>
+              <input type="number" id="ssMax" class="mlp-input sr-max" min="2" max="10" step="1" value="2" aria-label="Faculty per section">
+              <span class="sr-unit">faculty per section</span>
+              <button class="btn-add-item" onclick="ssSave()"><i class="fas fa-check"></i> SAVE</button>
+              <button class="btn-outline sr-cancel" onclick="ssCloseAdd()">Cancel</button>
+            </div>
+            <div class="mlp-table-wrap">
+              <table class="mlp-table">
+                <thead><tr><th>PROGRAM</th><th>SUBJECT</th><th>DESCRIPTION</th><th>FACULTY PER SECTION</th><th></th></tr></thead>
+                <tbody id="ssBody"><tr><td colspan="5" class="mlp-empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -607,6 +628,9 @@
       background:#fff; font:inherit; font-size:.85rem; }
     .sr-add select { flex:1 1 220px; min-width:0; }
     .sr-add .sr-max { width:80px; flex:0 0 80px; }
+    .sr-add select.ss-prog { flex:0 1 180px; }
+    .ss-prog-tag { display:inline-block; margin:1px 4px 1px 0; padding:1px 7px; border-radius:10px;
+                   background:#f6eaea; color:#7a0000; font-size:11px; font-weight:700; letter-spacing:.3px; }
     .sr-unit { font-size:.78rem; color:#6b5555; font-weight:600; }
     .sr-cancel { padding:6px 12px; }
     .sr-limit { display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:.82rem; color:#555; }

@@ -715,6 +715,73 @@ const SCENARIOS = {
         return { afterLoad, afterSecondLoad, afterUserPick: asked,
                  compat: g(env, '_getSpecCompatibility')('Architecture', 'ACCO 312').level };
     },
+    // Settings > Shared Subjects: A101 may be split between 2 faculty, a faculty per slice.
+    async shared_subject() {
+        const mon = dbRow('A101', 'Monday',   4, 7, 100, 1001, 9, 'BSIT1A',
+                          { employeenumber: 'F1', instructor: 'Dela Cruz, Juan', main_employeenumber: 'F1' });
+        const thu = dbRow('A101', 'Thursday', 4, 7, 100, 1002, 9, 'BSIT1A',
+                          { employeenumber: 'F2', instructor: 'Santos, Ana', main_employeenumber: 'F1' });
+        const facOf = env => Object.fromEntries(g(env, 'pendingManualSchedule')
+            .filter(c => c.subject_code === 'A101').map(c => [c.day, c.faculty_id]));
+        // The stub slice rows get the FACULTY select the real card renders, pre-filled by
+        // the real _sliceOwnFacultyFromJson.
+        const withFacSelect = env => {
+            const base = env.sandbox.addNewTimeSlot;
+            env.sandbox.addNewTimeSlot = (day, st, et, roomId, existingJson) => {
+                const id = base(day, st, et, roomId, existingJson);
+                const row = env.getEl(`ts-row-${id}`), q = row.querySelector;
+                const sel = { value: g(env, '_sliceOwnFacultyFromJson')(existingJson), dataset: {} };
+                row.querySelector = s => (s === '.ts-fac-sel' ? sel : q(s));
+                return id;
+            };
+        };
+
+        const env = setup(() => [mon, thu]);
+        env.sandbox.SHARED_SUBJECT_LIMITS = { 'A101': 2 };
+        withFacSelect(env);
+        await openSubject(env, 'A101', [mon, thu]);
+        const r1 = env.getEl('ts-row-1'), r2 = env.getEl('ts-row-2');
+        const loaded = {
+            locked: g(env, '_lockedFacultyId'),
+            faculty: facOf(env),
+            card_value: [r1.querySelector('.ts-fac-sel').value, r2.querySelector('.ts-fac-sel').value],
+            suffix: [g(env, '_sliceFacultySuffix')(r1), g(env, '_sliceFacultySuffix')(r2)],
+            limit_ok: await g(env, '_checkSharedFacultyLimit')(),
+            assigned: g(env, '_sharedFacultyIds')(),
+            slice_options: [...g(env, '_sliceFacultyOptionsHtml')('F2').matchAll(/value="([^"]*)"/g)].map(m => m[1]),
+        };
+        // Add a third faculty in the panel: refused at the limit of 2 (F1 + F2 already).
+        const before = env.modals.length;
+        g(env, 'addSharedFaculty')('F3');
+        const addOverLimit = { assigned: g(env, '_sharedFacultyIds')(), modals: env.modals.slice(before) };
+        // F2 still teaches Thursday: removing F2 is refused.
+        g(env, 'removeSharedFaculty')('F2');
+        const removeBusy = { assigned: g(env, '_sharedFacultyIds')(), modals: env.modals.slice(before + 1) };
+        env.modals.length = before;
+        // Over the limit: a third faculty would be refused before saving.
+        env.sandbox.SHARED_SUBJECT_LIMITS = { 'A101': 1 };
+        const overLimit = { ok: await g(env, '_checkSharedFacultyLimit')(), modals: env.modals.slice() };
+        env.sandbox.SHARED_SUBJECT_LIMITS = { 'A101': 2 };
+        // Move Thursday to the subject's faculty and save that slice: the faculty override
+        // reaches confirmAndPlace and the saved entry.
+        r2.querySelector('.ts-fac-sel').value = '';
+        g(env, '_dirtySliceIds').add(2);
+        await safely(() => g(env, 'saveIndividualSlice')(2));
+        const afterMove = facOf(env);
+        // Back to F2 via Save Slice: an unchanged day/time but a new faculty still saves.
+        r2.querySelector('.ts-fac-sel').value = 'F2';
+        await safely(() => g(env, 'saveIndividualSlice')(2));
+        const afterBack = { faculty: facOf(env), no_change_modal: env.modals.includes('NO-CHANGE') };
+
+        // The same rows for an ordinary subject: every slice takes the subject's faculty.
+        const plain = setup(() => [mon, thu]);
+        withFacSelect(plain);
+        await openSubject(plain, 'A101', [mon, thu]);
+        const ordinary = { faculty: facOf(plain), locked: g(plain, '_lockedFacultyId'),
+                           suffix: g(plain, '_sliceFacultySuffix')(plain.getEl('ts-row-2')),
+                           card_value: plain.getEl('ts-row-2').querySelector('.ts-fac-sel').value };
+        return { loaded, addOverLimit, removeBusy, overLimit, afterMove, afterBack, ordinary, load_errors: env.errors };
+    },
     async token_rules() {
         const env = setup(() => []);
         const cur = g(env, '_existingLoadTokenIsCurrent');

@@ -426,7 +426,12 @@ CREATE TABLE IF NOT EXISTS public.schedule_sessions
     starttimeid integer NOT NULL,
     endtimeid integer NOT NULL,
     roomid integer,
+    -- Shared subjects (shared_subject_policy): this slice's own faculty.
+    -- NULL = the subject's faculty (schedule_version.employeenumber).
+    employeenumber character varying(30),
     CONSTRAINT schedule_session_pkey PRIMARY KEY (sessionid),
+    CONSTRAINT fk_session_faculty FOREIGN KEY (employeenumber)
+        REFERENCES public.faculty (employeenumber) ON DELETE SET NULL,
     CONSTRAINT fk_session_version FOREIGN KEY (versionid)
         REFERENCES public.schedule_version (versionid)
         ON DELETE CASCADE,
@@ -440,6 +445,16 @@ CREATE TABLE IF NOT EXISTS public.schedule_sessions
     CONSTRAINT chk_session_daydesc CHECK (
         daydesc IN ('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')
     )
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_faculty ON public.schedule_sessions (employeenumber);
+
+-- SHARED SUBJECTS: a subject that up to max_faculty faculty may split per slice.
+CREATE TABLE IF NOT EXISTS public.shared_subject_policy (
+    subjectcode  VARCHAR(30) PRIMARY KEY,
+    max_faculty  SMALLINT NOT NULL CHECK (max_faculty BETWEEN 2 AND 10),
+    updated_by   VARCHAR(100),
+    updated_at   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 -----------------------------------------------------------------------

@@ -120,7 +120,9 @@ function _isPendingEdited(c) {
     return String(c.day || '') !== String(o.day || '')
         || String(c.start_time || '') !== String(o.start_time || '')
         || String(c.end_time || '') !== String(o.end_time || '')
-        || String(c.room_id ?? '') !== String(o.room_id ?? '');
+        || String(c.room_id ?? '') !== String(o.room_id ?? '')
+        // Shared subject (Settings > Shared Subjects): the slice moved to another faculty.
+        || ('faculty_id' in o && String(c.faculty_id ?? '') !== String(o.faculty_id ?? ''));
 }
 
 // Single source of truth for which raw DB rows should stay hidden from the room calendar
@@ -2492,11 +2494,6 @@ async function _dropSessionImpl(sessDataEncoded) {
         : Promise.resolve(window.confirm(`You are about to delete:\n${sd.label}`)));
     if (!ok1) return;
 
-    // Step 2
-    const ok2 = await (typeof showConfirmModal === 'function'
-        ? showConfirmModal('Are you sure you want to delete this schedule?\nThis action cannot be undone.', 'Final Confirmation')
-        : Promise.resolve(window.confirm('Are you sure? This action cannot be undone.')));
-    if (!ok2) return;
 
     // A subject's schedule can be split across multiple schedule_version rows (e.g. a
     // lecture slot in one room and a lab slot in another). Room View's grid only shows
@@ -2847,8 +2844,7 @@ async function _afterPublishedDelete(sd) {
     else renderGrid(_viewedRoomId(), ay, sem);
     if (typeof _refreshFlIfVisible === 'function') _refreshFlIfVisible();
     _refreshCurrentFacUnitDisplay();
-    await showValidationModal('Schedule Deleted',
-        'The slice was removed and the published schedule was updated.');
+    await _notifyDone('Schedule Deleted', 'The published schedule was updated.');
 }
 
 // Recomputes the right-panel "Max/Assigned/Remaining" stats for whichever faculty is
@@ -3437,7 +3433,10 @@ window._runManualApproveImpl = async function(opts = {}) {
                 pendingManualSchedule = pendingManualSchedule.filter(c => c.temp_id !== 'PREVIEW_' + _rowId);
 
                 const prevLen = pendingManualSchedule.length;
-                await confirmAndPlace();
+                // Shared subject: place the slice under its own faculty (as Save Slice does),
+                // not the subject's — else Approve silently undoes a faculty change.
+                window._sliceFacultyOverride = typeof _sliceFacultyFor === 'function' ? _sliceFacultyFor(row) : null;
+                try { await confirmAndPlace(); } finally { window._sliceFacultyOverride = null; }
                 // A new row grows the array; an existing row REPLACES its own mirror
                 // (same length) and confirmAndPlace clears currentEditSession only on success.
                 const _placed = pendingManualSchedule.length > prevLen ||
@@ -3620,10 +3619,11 @@ window._runManualApproveImpl = async function(opts = {}) {
                 }).catch(() => {}).finally(() => {
                     if (window._postPublishPanelReady === _panelReady) window._postPublishPanelReady = null;
                 });
-                await showValidationModal(auto ? 'Faculty Changed — Auto-saved' : 'Schedule Published',
+                // Corner toast (no "Okay, Got It" to press); the auto-save one stays longer.
+                await _notifyDone(auto ? 'Faculty Changed — Auto-saved' : 'Schedule Published',
                     (auto ? (opts.reasonLine ? opts.reasonLine + '\n\n' : '') +
                            'Status: Published (unchanged). The new faculty is now live on the published schedule.'
-                         : 'The schedule has been published successfully.') + _localNote);
+                         : '') + String(_localNote || '').trim(), auto ? 7000 : undefined);
                 // Keep the Approve in-flight guard until the refresh is done, so a second
                 // Approve never runs against a half-refreshed panel.
                 await _restReady;

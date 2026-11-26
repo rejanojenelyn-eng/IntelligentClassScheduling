@@ -583,7 +583,7 @@ def _load_events(cur, rooms):
                    REGEXP_REPLACE(UPPER(TRIM(cs.subjectcode)), '[^A-Z0-9]', '', 'g') AS sc,
                    UPPER(TRIM(cs.subjectcode)) AS raw, cs.subjectname AS sname, COALESCE(cs.laboratoryhours, 0) AS labh,
                    pyl.programcode AS prog, pyl.yearlevel AS yl, sch.sectionid,
-                   CAST(sch.employeenumber AS TEXT) AS emp, r.roomname AS room
+                   CAST(COALESCE(ss.employeenumber, sch.employeenumber) AS TEXT) AS emp, r.roomname AS room
             FROM schedule sch
             JOIN curriculumsubject cs ON sch.curriculumsubjectid = cs.curriculumsubjectid
             JOIN semester sm          ON sch.semesterid = sm.semesterid

@@ -434,18 +434,12 @@ function _sortDaysStr(daysStr) {
 
         modal.style.display = 'none';
 
-        // Two-step confirmation
+        // One confirmation (the list of what is published).
         const ok1 = await _dvConfirm(
             `You are about to publish ${selectedData.length} schedule${selectedData.length !== 1 ? 's' : ''}:\n\n${sessionLines}`,
             'Publish Schedule'
         );
         if (!ok1) { modal.style.display = 'flex'; return; }
-
-        const ok2 = await _dvConfirm(
-            'Are you sure you want to publish this schedule? This action will make the schedule visible to all users.',
-            'Final Confirmation'
-        );
-        if (!ok2) { modal.style.display = 'flex'; return; }
 
         const btn = document.getElementById('dvBtnApprove');
         btn.disabled = true;

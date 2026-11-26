@@ -3468,3 +3468,102 @@ body.dnd-active #gridWrapper .schedule-pill:hover { transform: none; }
 .fl-act-btn:hover { border-color: #630100; color: #630100; background: #fdf2f2; }
 .fl-act-btn.fl-act-del { color: #c0392b; border-color: #f2c4c0; }
 .fl-act-btn.fl-act-del:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
+
+/* ══ Add Schedule panel: subject card + faculty card refresh (2026-11-26) ══════════════
+   Subject card carries its status badge and "3 / 3 hrs"; the faculty card, the
+   Assign/Reassign button and the MAX/ASSIGNED/REMAINING box are three separate cards.
+   The empty state ("Select Faculty") is an outlined, clickable card with a chevron. */
+.editor-right-panel-new .right-subj-card {
+    align-items: center; gap: 10px; padding: 12px 14px;
+    background: #fcf4f4; border: 1px solid #efdede; border-radius: 10px;
+}
+.editor-right-panel-new .right-subj-code { font-size: 1rem; letter-spacing: .2px; }
+.editor-right-panel-new .right-subj-name { font-size: .7rem; color: #6b6b6b; font-weight: 500; }
+.right-subj-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.editor-right-panel-new .right-subj-badge {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 0;
+    font-size: .62rem; padding: 3px 9px; border-radius: 999px; letter-spacing: .3px;
+}
+.editor-right-panel-new .right-subj-badge.badge-complete::before {
+    content: "\f00c"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: .5rem;
+    width: 14px; height: 14px; border-radius: 50%; background: #2e7d32; color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.right-subj-side .unit-progress-val { font-size: 1.05rem; line-height: 1; white-space: nowrap; }
+
+.editor-right-panel-new .right-field-label { font-size: .72rem; letter-spacing: .6px; margin-top: 4px; }
+
+/* Faculty: three cards stacked in the (now frameless) panel. Spacing by margins, since
+   the editor sets the panel's display inline (block / none). */
+.editor-right-panel-new .fac-stats-panel {
+    background: transparent; border: 0; border-radius: 0; overflow: visible;
+}
+.fac-stats-panel > * + * { margin-top: 6px !important; }
+.fac-stats-panel .fac-stats-header {
+    gap: 10px; padding: 7px 10px; min-height: 48px; box-sizing: border-box;
+    background: #fcf4f4; border: 1px solid #efdede; border-radius: 10px;
+    transition: border-color .15s, box-shadow .15s;
+}
+.fac-stats-panel .fac-stats-avatar { width: 34px; height: 34px; font-size: .74rem; }
+.fac-stats-panel .fac-stats-name { font-size: .78rem; }
+.fac-stats-panel .fac-stats-type { font-size: .58rem; color: #7d7d7d; margin-top: 1px; }
+/* Selected faculty: no caret (Reassign Faculty below is the action) */
+.fac-stats-panel .fac-stats-chevron.fa-chevron-down { display: none; }
+
+/* Empty state: outlined maroon card, grey avatar | divider | "Select Faculty", chevron */
+.fac-stats-panel .fac-stats-header:has(.fac-stats-chevron.fa-search) {
+    border: 1.5px solid #8a1c1c; cursor: pointer;
+}
+.fac-stats-panel .fac-stats-header:has(.fac-stats-chevron.fa-search):hover {
+    box-shadow: 0 2px 10px rgba(99, 1, 0, .12);
+}
+.fac-stats-header:has(.fac-stats-chevron.fa-search) .fac-stats-avatar { background: #bdbdbd !important; }
+.fac-stats-header:has(.fac-stats-chevron.fa-search) .fac-stats-avatar i { color: #fff; opacity: 1 !important; font-size: .9rem !important; }
+.fac-stats-header:has(.fac-stats-chevron.fa-search) .fac-stats-info { border-left: 1px solid #dccaca; padding-left: 12px; }
+.fac-stats-header:has(.fac-stats-chevron.fa-search) .fac-stats-name { color: #3a3a3a !important; font-weight: 800 !important; }
+.fac-stats-header:has(.fac-stats-chevron.fa-search) .fac-stats-type { color: #6f6f6f !important; }
+.fac-stats-panel .fac-stats-chevron.fa-search { color: #8a1c1c !important; font-size: .95rem; }
+.fac-stats-panel .fac-stats-chevron.fa-search::before { content: "\f054"; }   /* chevron-right */
+
+/* Assign / Reassign: outlined maroon button */
+.fac-stats-panel .btn-assign-faculty {
+    margin-top: 0; padding: 6px 10px; border-radius: 8px; font-size: .74rem;
+    display: block; background: #fff; color: #7a0000; border: 1.5px solid #8a1c1c;
+}
+.fac-stats-panel .btn-assign-faculty i { margin-right: 6px; }
+.fac-stats-panel .btn-assign-faculty:hover:not(:disabled),
+.fac-stats-panel .btn-assign-faculty.reassign:hover:not(:disabled) { background: #fbefef; filter: none; }
+.fac-stats-panel .btn-assign-faculty.reassign { background: #fff; }
+/* First pick waiting for confirmation: filled maroon */
+.fac-stats-panel .btn-assign-faculty[data-action="assign"] { background: #7a0000; color: #fff; }
+.fac-stats-panel .btn-assign-faculty[data-action="assign"]:hover:not(:disabled) { background: #630100; }
+
+/* MAX HOURS / ASSIGNED / REMAINING card */
+.fac-stats-panel #fac-stats-body {
+    background: #fcf8f8; border: 1px solid #ece2e2; border-radius: 10px; padding: 6px 8px 9px;
+}
+.fac-stats-panel .fac-stats-metrics { gap: 0; background: transparent; }
+.fac-stats-panel .fac-metric-box { background: transparent; padding: 2px 4px 6px; }
+.fac-stats-panel .fac-metric-box + .fac-metric-box { border-left: 1px solid #ddd0d0; }
+.fac-stats-panel .fac-metric-val { font-size: 1.2rem; }
+.fac-stats-panel .fac-metric-lbl { font-size: .54rem; color: #6f6f6f; margin-top: 3px; }
+.fac-stats-panel .fac-stats-progress { height: 6px; background: #e9e1e1; border-radius: 999px; overflow: hidden; margin: 4px 2px 0; }
+.fac-stats-panel .fac-stats-prog-fill { background: #ff6d00; border-radius: 999px; }
+
+/* "+ ADD SCHEDULE" header: a plain plus (not a circled, button-like icon), rounded top */
+.editor-right-panel-new { border-radius: 12px; }
+.editor-right-panel-new .right-panel-add-hdr { border-radius: 11px 11px 0 0; padding: 12px 16px; gap: 10px; }
+.editor-right-panel-new .right-panel-add-icon,
+.editor-right-panel-new .right-panel-add-hdr.mode-edit .right-panel-add-icon {
+    width: auto; height: auto; background: transparent; border: 0; border-radius: 0;
+    color: #fff; font-size: .95rem;
+}
+.editor-right-panel-new .right-panel-add-title { font-size: .82rem; letter-spacing: 1px; }
+
+/* Desktop: the Add Schedule panel starts at the top, beside the Room/Program View toolbar
+   (that space was empty), so less scrolling. The toolbar stops before the panel; the panel
+   is pulled up by the toolbar's height (38px) + its margin (12px) + the column gap (8px). */
+@media (min-width: 1025px) {
+    .center-right-col > .manual-nav-bar { margin-right: calc(clamp(250px, 22vw, 320px) + 10px); }
+    .center-right-row > .editor-right-panel-new { margin-top: -58px; }
+}

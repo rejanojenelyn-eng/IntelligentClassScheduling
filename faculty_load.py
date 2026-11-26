@@ -31,6 +31,8 @@ the copy here instead of the reverse.
 from collections import defaultdict
 from datetime import time
 
+import shared_subjects as _shared_subjects
+
 WEEKDAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'}
 
 # Display order for day/time lists (Faculty Load tab, TS panel, etc.) — sessions
@@ -57,7 +59,7 @@ EFFECTIVE_SESSIONS_CTE = """
     effective_sessions AS (
         SELECT 'Official'::text AS source, ss.sessionid, ss.sessionid AS official_sessionid,
                sv.versionid, sc.scheduleid, sc.sectionid, sc.semesterid, sc.curriculumsubjectid,
-               COALESCE(sv.employeenumber, sc.employeenumber) AS employeenumber,
+               COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber) AS employeenumber,
                ss.daydesc, ss.starttimeid, ss.endtimeid, ss.roomid
         FROM schedule_sessions ss
         JOIN schedule_version sv ON ss.versionid = sv.versionid AND sv.status = 'Published'
@@ -113,7 +115,10 @@ FACULTY_SESSIONS_SQL = """
     SELECT
         cs.subjectcode,
         cs.subjectname,
+        -- Shared subject (Settings > Shared Subjects): this faculty's share of the units,
+        -- by their share of the subject's hours; 1 for every other subject.
         COALESCE(cs.creditunits,0) AS units,
+        CASE WHEN es.source = 'Official' THEN """ + _shared_subjects.unit_share_sql('es.versionid', 'es.employeenumber') + """ ELSE 1 END AS unit_share,
         ROUND(EXTRACT(EPOCH FROM (ts_e.timevalue - ts_s.timevalue)) / 3600.0, 2) AS hrs,""" + _YEAR_SECTION_SQL + """ AS year_section,
         sec.sectionid,
         TO_CHAR(ts_s.timevalue,'HH12:MI AM') || ' - ' || TO_CHAR(ts_e.timevalue,'HH12:MI AM') AS time_range,
@@ -455,7 +460,21 @@ def get_faculty_sessions(cur, emp_num, ay_id, sem, published_only=False):
     call-site compatibility: the live schedule never includes Drafts, so it no longer
     changes anything."""
     cur.execute(FACULTY_SESSIONS_SQL, (emp_num, ay_id, sem))
-    return [dict(r) for r in (cur.fetchall() or [])]
+    return [_apply_unit_share(dict(r)) for r in (cur.fetchall() or [])]
+
+
+def _apply_unit_share(row):
+    """Shared subject: credit this faculty only their share of the units (by hours).
+    Every other subject keeps its units exactly as stored."""
+    share = row.pop('unit_share', None)
+    try:
+        share = float(share)
+    except (TypeError, ValueError):
+        return row
+    if 0 <= share < 0.9999:
+        row['units'] = round(float(row.get('units') or 0) * share, 2)
+        row['shared_subject'] = True
+    return row
 
 
 def _default_config(config):

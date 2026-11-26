@@ -2216,7 +2216,7 @@ _OCCURRENCES_SQL = """
         WHERE NOT %(draft_pref)s OR es.scheduleid NOT IN (SELECT scheduleid FROM drafted)
         UNION ALL
         SELECT 'Draft', sc.sectionid, sc.semesterid, sc.curriculumsubjectid,
-               COALESCE(sv.employeenumber, sc.employeenumber), ss.daydesc, ss.starttimeid,
+               COALESCE(ss.employeenumber, sv.employeenumber, sc.employeenumber), ss.daydesc, ss.starttimeid,
                ss.endtimeid, ss.roomid
         FROM public.schedule_version sv
         JOIN public.schedule sc ON sc.scheduleid = sv.scheduleid

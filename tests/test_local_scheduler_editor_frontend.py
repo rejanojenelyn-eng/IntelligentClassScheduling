@@ -305,7 +305,7 @@ def test_editor_publish_saves_then_publishes_with_fresh_updated_at(harness):
     publish = r['calls'][2]['body']
     assert publish == {'reason': 'Room swap', 'expected_updated_at': '2026-09-28T09:15:30.123456'}
     assert r['stored']['41'] == '2026-09-28T09:20:01.654321'   # replaced after publish
-    assert 'Published' in _titles(r)
+    assert 'Schedule Published' in _titles(r)
     assert r['buttons']['publish']['disabled'] is False
     assert r['buttons']['publish']['innerHTML'] == 'LABEL:btnPublishLocalArr'
     assert r['buttons']['save']['innerHTML'] == 'LABEL:btnSaveLocalArr'   # untouched by publish
@@ -326,7 +326,7 @@ def test_restore_sends_updated_at_then_publishes_the_copy(harness):
     assert r['calls'][1]['url'] == '/api/local/arrangement/42/publish'
     assert r['calls'][1]['body'] == {'reason': 'Room swap', 'expected_updated_at': '2026-09-28T09:25:07.111111'}
     assert r['stored']['42'] == '2026-09-28T09:20:01.654321'
-    assert 'Published' in _titles(r)
+    assert 'Schedule Published' in _titles(r)
 
 
 def test_rejected_restore_discards_the_staged_copy(harness):
